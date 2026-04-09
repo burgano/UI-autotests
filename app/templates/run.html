@@ -1,0 +1,365 @@
+{% extends "base.html" %}
+{% block title %}Running - UI Autotest Generator{% endblock %}
+{% block content %}
+
+<style>
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { animation: spin 0.8s linear infinite; }
+</style>
+
+<div x-data="runPage('{{ job_id }}')" x-init="init()" class="space-y-6">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <h1 class="text-2xl font-bold text-white">Generating Tests</h1>
+      <!-- Global spinner - visible while running -->
+      <svg x-show="status === 'running'" class="spinner w-5 h-5 text-brand-500" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z"/>
+      </svg>
+    </div>
+    <!-- Elapsed timer + Cancel button -->
+    <div x-show="status === 'running'" class="flex items-center gap-4">
+      <span class="text-sm text-gray-500 font-mono">
+        Time: <span class="text-gray-300" x-text="formatTime(elapsed)"></span>
+      </span>
+      <button @click="cancelJob()"
+              :disabled="cancelling"
+              class="text-sm text-gray-400 hover:text-red-400 border border-gray-700 hover:border-red-700
+                     disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg transition-colors">
+        <span x-show="!cancelling">✕ Cancel</span>
+        <span x-show="cancelling">Cancelling...</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Stage progress bar -->
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+    <div class="flex justify-between mb-4">
+      <template x-for="(s, i) in stages" :key="i">
+        <div class="flex flex-col items-center gap-1.5" style="width: 20%">
+
+          <!-- Stage circle -->
+          <div class="relative w-9 h-9 flex items-center justify-center">
+
+            <!-- Spinning ring for active stage -->
+            <template x-if="stageIndex === i && status === 'running'">
+              <svg class="spinner absolute inset-0 w-9 h-9 text-brand-400" fill="none" viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r="16" stroke="currentColor" stroke-width="2.5"
+                        stroke-dasharray="60 40" stroke-linecap="round" opacity="0.6"/>
+              </svg>
+            </template>
+
+            <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300"
+                 :class="{
+                   'bg-brand-600 text-white':   stageIndex > i,
+                   'bg-brand-500 text-white':   stageIndex === i && status === 'running',
+                   'bg-gray-800 text-gray-500': stageIndex < i,
+                   'bg-green-600 text-white':   stageIndex === i && status === 'done',
+                   'bg-red-600 text-white':     stageIndex === i && status === 'error',
+                 }">
+              <span x-show="stageIndex > i">✓</span>
+              <span x-show="stageIndex === i && status === 'error'">✗</span>
+              <span x-show="(stageIndex < i) || (stageIndex === i && status === 'running')" x-text="i + 1"></span>
+            </div>
+          </div>
+
+          <!-- Stage label + per-stage timer -->
+          <span class="text-xs text-center leading-tight"
+                :class="stageIndex >= i ? 'text-gray-200' : 'text-gray-600'"
+                x-text="s"></span>
+          <!-- Active stage: live timer -->
+          <span x-show="stageIndex === i && status === 'running'"
+                class="text-xs text-brand-400 font-mono tabular-nums"
+                x-text="formatTime(stageTimes[i] || 0)"></span>
+          <!-- Completed stage: show final time -->
+          <span x-show="stageIndex > i && stageTimes[i] > 0"
+                class="text-xs text-gray-600 font-mono tabular-nums"
+                x-text="formatTime(stageTimes[i])"></span>
+        </div>
+      </template>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="w-full bg-gray-800 rounded-full h-1.5">
+      <div class="bg-brand-500 h-1.5 rounded-full transition-all duration-700"
+           :class="status === 'running' ? 'opacity-100' : 'opacity-60'"
+           :style="`width: ${Math.round((stageIndex / (stages.length - 1)) * 100)}%`"></div>
+    </div>
+
+    <!-- Stage hint -->
+    <p class="text-xs text-gray-600 mt-2 text-center" x-text="stageHint"></p>
+  </div>
+
+  <!-- Claude error banner - rate limit or auth error during generation -->
+  <div x-show="claudeErrorType" x-cloak
+       class="border rounded-xl p-4 flex items-start gap-3"
+       :class="claudeErrorType === 'rate_limit' ? 'bg-yellow-900/20 border-yellow-800' : 'bg-red-900/20 border-red-800'">
+    <svg class="w-5 h-5 mt-0.5 shrink-0" :class="claudeErrorType === 'rate_limit' ? 'text-yellow-400' : 'text-red-400'" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+    </svg>
+    <div>
+      <p class="text-sm font-semibold" :class="claudeErrorType === 'rate_limit' ? 'text-yellow-300' : 'text-red-300'"
+         x-text="claudeErrorType === 'rate_limit' ? 'Claude Code rate limit reached' : 'Claude Code authentication error'"></p>
+      <p class="text-xs text-gray-400 mt-1"
+         x-text="claudeErrorType === 'rate_limit'
+           ? 'Generation paused. Your Claude Code usage limit has been reached. Wait for the hourly/weekly reset or check your plan at claude.ai/settings.'
+           : 'Claude Code is not authenticated. Stop the server, run \\'claude auth login\\' in terminal, then restart.'">
+      </p>
+    </div>
+  </div>
+
+  <!-- Results button - appears when done -->
+  <div x-show="status === 'done'" x-cloak
+       class="bg-green-900/20 border border-green-800 rounded-xl p-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-full bg-green-700 flex items-center justify-center text-white text-sm font-bold">✓</div>
+      <span class="text-green-300 font-semibold">Generation complete!</span>
+    </div>
+    <a :href="'/results/' + jobId"
+       class="bg-brand-600 hover:bg-brand-500 text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition-colors">
+      View Results →
+    </a>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- Terminal log -->
+    <div class="lg:col-span-2 bg-gray-950 border border-gray-800 rounded-xl overflow-hidden">
+      <div class="bg-gray-900 px-4 py-2 flex items-center gap-2 border-b border-gray-800">
+        <div class="w-3 h-3 rounded-full bg-red-500"></div>
+        <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+        <div class="w-3 h-3 rounded-full bg-green-500"></div>
+        <span class="text-xs text-gray-500 ml-2">Console output</span>
+        <span class="ml-auto text-xs text-gray-600" x-text="logs.length + ' lines'"></span>
+        <button @click="clearLog()" class="ml-3 text-xs text-gray-600 hover:text-gray-400">Clear</button>
+      </div>
+      <div class="terminal text-xs text-green-400 p-4 h-96 overflow-y-auto overflow-x-hidden space-y-0.5"
+           x-ref="logContainer">
+        <template x-for="(line, i) in logs" :key="i">
+          <div x-text="line"
+               style="white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere;"
+               :class="{
+                 'text-red-400':    line.includes('✗') || line.includes('FAILED') || line.includes('error'),
+                 'text-yellow-400': line.includes('WARNING') || line.includes('FLAKY'),
+                 'text-gray-500':   line.includes('↩'),
+                 'text-blue-300':   !line.includes('↩') && (line.includes('Generating') || line.includes('Analyzing') || line.includes('Scanning')),
+                 'text-green-400':  !line.includes('↩') && !line.includes('✗') && !line.includes('FAILED') && !line.includes('WARNING'),
+               }"></div>
+        </template>
+        <!-- Blinking cursor while running -->
+        <div x-show="status === 'running'" class="flex items-center gap-2 text-gray-600 mt-1">
+          <svg class="spinner w-3 h-3 text-brand-500" fill="none" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="30 10"/>
+          </svg>
+          <span class="animate-pulse text-gray-500" x-text="stages[stageIndex] + '...'"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Endpoint status panel -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
+      <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Endpoints</h3>
+
+      <!-- Show spinner only while still in early stages -->
+      <div x-show="endpoints.length === 0 && stageIndex < 2 && status === 'running'"
+           class="flex items-center gap-2 text-gray-600 text-sm">
+        <svg class="spinner w-4 h-4 text-gray-700" fill="none" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="30 10"/>
+        </svg>
+        Waiting for analysis...
+      </div>
+
+      <template x-for="ep in endpoints" :key="ep.url">
+        <div class="flex items-center justify-between gap-2 py-1 border-b border-gray-800/60">
+          <span class="text-xs font-mono text-gray-300 truncate" x-text="ep.url"></span>
+          <span class="shrink-0 flex items-center">
+            <!-- Running spinner per endpoint -->
+            <template x-if="ep.status === 'running'">
+              <svg class="spinner w-3.5 h-3.5 text-yellow-400" fill="none" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="30 10"/>
+              </svg>
+            </template>
+            <span x-show="ep.status === 'ok'"           class="text-xs text-green-400">✓</span>
+            <span x-show="ep.status === 'skip'"         class="text-xs text-gray-500" title="Coverage sufficient - no new tests needed">↩</span>
+            <span x-show="ep.status === 'error'"        class="text-xs text-red-400">✗</span>
+            <span x-show="ep.status === 'overload'"     title="Anthropic servers were temporarily overloaded. Re-run to generate tests for this URL."
+                  class="text-xs text-orange-400 bg-orange-900/40 border border-orange-800 rounded px-1.5 py-0.5">⚡ Retry</span>
+            <span x-show="ep.status === 'pending'"      class="text-xs text-gray-700">○</span>
+            <span x-show="ep.status === 'not_found'"    class="text-xs text-red-400 bg-red-900/40 border border-red-800 rounded px-1.5 py-0.5">Not found</span>
+            <span x-show="ep.status === 'needs_review'" title="Tests were generated but could not be auto-fixed after 2 attempts. Review manually."
+                  class="text-xs text-yellow-400 bg-yellow-900/40 border border-yellow-800 rounded px-1.5 py-0.5">⚠ Review</span>
+          </span>
+        </div>
+      </template>
+
+      <!-- Error state -->
+      <div x-show="status === 'error'" class="pt-2 space-y-2">
+        <div class="text-red-400 text-xs break-all" x-text="errorMsg"></div>
+        <a href="/" class="block text-center text-gray-400 hover:text-white text-xs">← Back to config</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function runPage(jobId) {
+  return {
+    jobId,
+    stages: ['Analyzing', 'Coverage', 'Generating', 'Running', 'Done'],
+    stageHints: [
+      'Opening browser and scanning pages...',
+      'Checking existing test coverage...',
+      'Claude is writing tests - this may take a minute...',
+      'Running tests and diagnosing failures...',
+      'All done!',
+    ],
+    stageIndex: 0,
+    status: 'running',
+    logs: [],
+    endpoints: [],
+    errorMsg: '',
+    claudeErrorType: '',   // 'rate_limit' | 'auth' | ''
+    cancelling: false,
+    elapsed: 0,
+    stageTimes: {},      // per-stage elapsed seconds, keyed by stage index
+    _elapsedTimer: null,
+    _stageTimer: null,
+
+    get stageHint() {
+      return this.stageHints[this.stageIndex] || ''
+    },
+
+    init() {
+      // Guard against double-init (Alpine.js can call x-init multiple times)
+      if (this._initialized) return
+      this._initialized = true
+
+      // Start global elapsed timer
+      this._elapsedTimer = setInterval(() => { this.elapsed++ }, 1000)
+
+      const socket = io()
+
+      // .off() before .on() prevents duplicate handlers if socket is a singleton
+      socket.off('log_line').on('log_line', (data) => {
+        if (data.job_id !== this.jobId) return
+        this.logs.push(data.line)
+        this.$nextTick(() => {
+          const c = this.$refs.logContainer
+          if (c) c.scrollTop = c.scrollHeight
+        })
+      })
+
+      socket.off('stage_change').on('stage_change', (data) => {
+        if (data.job_id !== this.jobId) return
+        const idx = parseInt(data.index)
+        this.stageIndex = idx
+        // Reset timer for this stage
+        this.stageTimes = { ...this.stageTimes, [idx]: 0 }
+        clearInterval(this._stageTimer)
+        this._stageTimer = setInterval(() => {
+          this.stageTimes = { ...this.stageTimes, [idx]: (this.stageTimes[idx] || 0) + 1 }
+        }, 1000)
+      })
+
+      socket.off('endpoints_discovered').on('endpoints_discovered', (data) => {
+        if (data.job_id !== this.jobId) return
+        this.endpoints = data.urls.map(u => ({ url: u, status: 'pending' }))
+        if (this.endpoints.length > 0) this.endpoints[0].status = 'running'
+      })
+
+      socket.off('endpoint_generated').on('endpoint_generated', (data) => {
+        if (data.job_id !== this.jobId) return
+        const ep = this.endpoints.find(e => e.url === data.url)
+        if (ep) ep.status = data.status
+        const pending = this.endpoints.find(e => e.status === 'pending')
+        if (pending) pending.status = 'running'
+      })
+
+      socket.off('claude_error').on('claude_error', (data) => {
+        if (data.job_id !== this.jobId) return
+        this.claudeErrorType = data.error_type || 'auth'
+      })
+
+      socket.off('job_done').on('job_done', (data) => {
+        if (data.job_id !== this.jobId) return
+        this.status = 'done'
+        this.stageIndex = 4
+        clearInterval(this._elapsedTimer)
+        clearInterval(this._stageTimer)
+        // If endpoints weren't populated via socket events, fetch them now
+        if (this.endpoints.length === 0) {
+          fetch(`/job/${this.jobId}/status`)
+            .then(r => r.json())
+            .then(d => {
+              if (d.discovered_urls && d.discovered_urls.length > 0) {
+                this.endpoints = d.discovered_urls.map(u => ({
+                  url: u,
+                  status: (d.endpoint_statuses || {})[u] || 'ok',
+                }))
+              }
+            }).catch(() => {})
+        }
+      })
+
+      socket.off('job_cancelled').on('job_cancelled', (data) => {
+        if (data.job_id !== this.jobId) return
+        window.location.href = '/'
+      })
+
+      socket.off('job_error').on('job_error', (data) => {
+        if (data.job_id !== this.jobId) return
+        this.status = 'error'
+        this.errorMsg = data.error
+        clearInterval(this._elapsedTimer)
+        clearInterval(this._stageTimer)
+      })
+
+      // Start stage timer for initial stage (index 0)
+      this.stageTimes = { 0: 0 }
+      this._stageTimer = setInterval(() => {
+        this.stageTimes = { ...this.stageTimes, [this.stageIndex]: (this.stageTimes[this.stageIndex] || 0) + 1 }
+      }, 1000)
+
+      // Catch up: fetch current job state in case we missed socket events
+      fetch(`/job/${this.jobId}/status`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.stage_index !== undefined) this.stageIndex = data.stage_index
+          if (data.status === 'done') { this.status = 'done'; this.stageIndex = 4 }
+          if (data.status === 'error') { this.status = 'error'; this.errorMsg = data.error || '' }
+          // Restore endpoint list if already discovered
+          if (data.discovered_urls && data.discovered_urls.length > 0 && this.endpoints.length === 0) {
+            this.endpoints = data.discovered_urls.map(u => ({
+              url: u,
+              status: (data.endpoint_statuses || {})[u] || 'pending',
+            }))
+          }
+        })
+        .catch(() => {})
+    },
+
+    formatTime(sec) {
+      const m = Math.floor(sec / 60).toString().padStart(2, '0')
+      const s = (sec % 60).toString().padStart(2, '0')
+      return `${m}:${s}`
+    },
+
+    clearLog() { this.logs = [] },
+
+    async cancelJob() {
+      this.cancelling = true
+      try {
+        await fetch(`/job/${this.jobId}/cancel`, { method: 'POST' })
+        // Redirect happens via job_cancelled socket event
+        // Fallback: redirect after short delay if socket event doesn't arrive
+        setTimeout(() => { window.location.href = '/' }, 2000)
+      } catch(e) {
+        window.location.href = '/'
+      }
+    },
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,481 @@
+{% extends "base.html" %}
+{% block title %}Run Tests - UI Autotest Generator{% endblock %}
+{% block content %}
+
+<style>
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { animation: spin 0.8s linear infinite; }
+</style>
+
+<div x-data="runTestsPage()" x-init="init()" class="space-y-6 max-w-5xl mx-auto">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-white">Run Existing Tests</h1>
+    <a href="/" class="text-sm text-gray-400 hover:text-white">← Generate new tests</a>
+  </div>
+
+  <!-- Config form -->
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">
+          Autotest Project Path <span class="text-red-400">*</span>
+        </label>
+        <div class="flex gap-2">
+          <input type="text" x-model="projectPath" @blur="validatePath()"
+                 placeholder="/Users/you/UItest"
+                 class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                        focus:outline-none focus:border-brand-500"
+                 :class="pathOk === false ? 'border-red-500' : pathOk === true ? 'border-green-500' : ''" />
+          <span x-show="pathOk === true"  class="text-green-400 self-center">✓</span>
+          <span x-show="pathOk === false" class="text-red-400 self-center">✗</span>
+        </div>
+        <p x-show="pathError" x-text="pathError" class="text-red-400 text-xs mt-1"></p>
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">Filter <span class="text-gray-600">(optional)</span></label>
+        <input type="text" x-model="keyword"
+               placeholder="-k SignIn  or  tests/test_login.py"
+               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                      focus:outline-none focus:border-brand-500 font-mono" />
+        <p class="text-xs text-gray-600 mt-1">Passed directly to pytest - any pytest argument works</p>
+      </div>
+    </div>
+
+    <!-- Workers + Delay -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-gray-800 pt-4">
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">
+          Parallel workers
+          <span class="text-gray-600 text-xs ml-1">- browsers running simultaneously</span>
+        </label>
+        <div class="flex items-center gap-3">
+          <select @change="workers = parseInt($event.target.value)"
+                  class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                         focus:outline-none focus:border-brand-500 font-mono">
+            <template x-for="n in [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]" :key="n">
+              <option :value="n" :selected="n === workers" x-text="n === 1 ? '1 (off)' : n"></option>
+            </template>
+          </select>
+          <span class="text-xs text-gray-600">
+            <span x-show="workers == 1">Sequential - safest for rate-limited sites</span>
+            <span x-show="workers > 1" x-text="'~' + Math.round(100 / workers) + '% of original duration'"></span>
+          </span>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">
+          Delay between tests
+          <span class="text-gray-600 text-xs ml-1">- pause after each test</span>
+        </label>
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2">
+            <input type="number" x-model="sleepMs" min="0" max="10000" step="100"
+                   class="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                          focus:outline-none focus:border-brand-500 font-mono" />
+            <span class="text-xs text-gray-500">ms</span>
+          </div>
+          <span class="text-xs text-gray-600">
+            <span x-show="sleepMs == 0">No delay</span>
+            <span x-show="sleepMs > 0" x-text="(sleepMs / 1000).toFixed(1) + 's pause after each test'"></span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Anti-Bot Bypass Header -->
+    <div class="border-t border-gray-800 pt-4">
+      <button @click="showBypass = !showBypass"
+              class="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 transition-colors">
+        <svg class="w-3.5 h-3.5 transition-transform" :class="showBypass ? 'rotate-90' : ''"
+             fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        Anti-Bot Bypass Header
+        <span x-show="bypassName && bypassValue"
+              class="ml-1 px-1.5 py-0.5 bg-indigo-900/60 text-indigo-300 border border-indigo-800 rounded text-[10px]">
+          active
+        </span>
+      </button>
+      <div x-show="showBypass" class="mt-3 grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Header name</label>
+          <input type="text" x-model="bypassName" placeholder="X-Test-Bypass"
+                 :class="bypassPartiallyFilled() && !bypassName.trim() ? 'border-red-500' : 'border-gray-700'"
+                 class="w-full bg-gray-800 border rounded-lg px-3 py-2 text-sm font-mono
+                        focus:outline-none focus:border-brand-500" />
+          <p x-show="bypassPartiallyFilled() && !bypassName.trim()"
+             class="text-red-400 text-xs mt-1">Header name is required</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Header value</label>
+          <input type="text" x-model="bypassValue" placeholder="my-secret-token"
+                 :class="bypassPartiallyFilled() && !bypassValue.trim() ? 'border-red-500' : 'border-gray-700'"
+                 class="w-full bg-gray-800 border rounded-lg px-3 py-2 text-sm font-mono
+                        focus:outline-none focus:border-brand-500" />
+          <p x-show="bypassPartiallyFilled() && !bypassValue.trim()"
+             class="text-red-400 text-xs mt-1">Header value is required</p>
+        </div>
+        <p class="col-span-2 text-xs text-gray-600">
+          Overrides the header from conftest.py for this run. The conftest.py file is not modified.
+        </p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3 pt-1 flex-wrap">
+      <button @click="runTests()"
+              :disabled="running || pathOk !== true || bypassPartiallyFilled()"
+              class="bg-brand-600 hover:bg-brand-500 disabled:opacity-50 disabled:cursor-not-allowed
+                     text-white font-semibold px-6 py-2.5 rounded-xl transition-colors flex items-center gap-2">
+        <svg x-show="running" class="spinner w-4 h-4" fill="none" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="30 10"/>
+        </svg>
+        <span x-show="!running">▶ Run Tests</span>
+        <span x-show="running">Running...</span>
+      </button>
+      <span x-show="running" class="text-sm text-gray-500 font-mono">
+        Time: <span class="text-gray-300" x-text="formatTime(elapsed)"></span>
+      </span>
+      <button x-show="running" @click="stopTests()"
+              class="text-xs text-red-400 hover:text-red-300 border border-red-900 hover:border-red-700
+                     px-3 py-1.5 rounded-lg transition-colors">
+        ■ Stop
+      </button>
+
+      <!-- Allure button - appears after run completes -->
+      <button x-show="allureReady && !running"
+              @click="openAllure()"
+              :disabled="allureStatus === 'opening'"
+              class="flex items-center gap-2 text-sm text-white bg-indigo-700 hover:bg-indigo-600
+                     disabled:opacity-50 disabled:cursor-not-allowed
+                     border border-indigo-600 px-4 py-2 rounded-xl transition-colors ml-auto">
+        <svg x-show="allureStatus === 'opening'" class="spinner w-4 h-4" fill="none" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="30 10"/>
+        </svg>
+        <svg x-show="allureStatus !== 'opening'" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <span x-text="allureStatus === 'opening' ? 'Generating...' : 'Open Allure Report'"></span>
+      </button>
+    </div>
+
+    <!-- Allure error -->
+    <div x-show="allureStatus === 'error'"
+         class="mt-2 text-xs text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">
+      Allure error: <span x-text="allureError"></span>
+    </div>
+
+    <!-- Allure not available notice - shown after run if CLI or plugin missing -->
+    <div x-show="results && !allureReady && (!alureCli || !allurePlugin)"
+         class="mt-3 flex items-start gap-3 bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-3">
+      <svg class="w-4 h-4 text-gray-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      <div class="text-xs text-gray-400 space-y-1">
+        <p class="text-gray-300 font-medium">Allure report not available</p>
+        <p x-show="!alureCli">
+          Allure CLI is not installed.
+          <template x-if="osPlatform === 'Windows'">
+            <span>Install via Scoop: <code class="bg-gray-900 text-gray-300 px-1.5 py-0.5 rounded">scoop install allure</code>
+            or download from <code class="bg-gray-900 text-gray-300 px-1.5 py-0.5 rounded">github.com/allure-framework/allure2/releases</code></span>
+          </template>
+          <template x-if="osPlatform === 'Darwin'">
+            <code class="bg-gray-900 text-gray-300 px-1.5 py-0.5 rounded">brew install allure</code>
+          </template>
+          <template x-if="osPlatform === 'Linux'">
+            <code class="bg-gray-900 text-gray-300 px-1.5 py-0.5 rounded">sudo apt install allure</code>
+            or see <code class="bg-gray-900 text-gray-300 px-1.5 py-0.5 rounded">github.com/allure-framework/allure2/releases</code>
+          </template>
+          <template x-if="!osPlatform">
+            <code class="bg-gray-900 text-gray-300 px-1.5 py-0.5 rounded">brew install allure</code>
+          </template>
+        </p>
+        <p x-show="alureCli && !allurePlugin">
+          The <code class="bg-gray-900 text-gray-300 px-1.5 py-0.5 rounded">allure-pytest</code> plugin is not installed in the app venv.
+          Restart the server - it will be installed automatically on the next run.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terminal output -->
+  <div x-show="logs.length > 0 || running" class="bg-gray-950 border border-gray-800 rounded-xl overflow-hidden">
+    <div class="bg-gray-900 px-4 py-2 flex items-center gap-2 border-b border-gray-800">
+      <div class="w-3 h-3 rounded-full bg-red-500"></div>
+      <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+      <div class="w-3 h-3 rounded-full bg-green-500"></div>
+      <span class="text-xs text-gray-500 ml-2">pytest output</span>
+      <span class="ml-auto text-xs text-gray-600" x-text="logs.length + ' lines'"></span>
+      <button @click="logs = []" class="ml-3 text-xs text-gray-600 hover:text-gray-400">Clear</button>
+    </div>
+    <div class="terminal text-xs p-4 h-80 overflow-y-auto overflow-x-hidden space-y-0.5"
+         x-ref="logContainer">
+      <template x-for="(line, i) in logs" :key="i">
+        <div x-text="line"
+             style="white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere;"
+             :class="{
+               'text-green-400': line.includes(' PASSED'),
+               'text-red-400':   line.includes(' FAILED') || line.includes(' ERROR') || line.includes('error'),
+               'text-yellow-400': line.includes(' WARN') || line.includes('warning'),
+               'text-gray-500':  line.startsWith('===') || line.startsWith('---'),
+               'text-gray-300':  !line.includes(' PASSED') && !line.includes(' FAILED') && !line.includes('error'),
+             }"></div>
+      </template>
+      <div x-show="running" class="flex items-center gap-2 text-gray-600 mt-1">
+        <svg class="spinner w-3 h-3 text-brand-500" fill="none" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="30 10"/>
+        </svg>
+        <span class="text-gray-500 animate-pulse">Running tests...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results summary -->
+  <div x-show="results" x-cloak class="space-y-4">
+
+    <!-- Summary banner -->
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-4">
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
+        <div class="text-3xl font-bold text-white" x-text="results?.total ?? 0"></div>
+        <div class="text-xs text-gray-400 mt-1">Total tests</div>
+      </div>
+      <div class="bg-green-900/30 border border-green-800 rounded-xl p-4 text-center">
+        <div class="text-3xl font-bold text-green-400" x-text="results?.passed ?? 0"></div>
+        <div class="text-xs text-green-600 mt-1">Passed</div>
+      </div>
+      <div class="bg-red-900/30 border border-red-800 rounded-xl p-4 text-center">
+        <div class="text-3xl font-bold text-red-400" x-text="(results?.failed ?? 0) + (results?.errors ?? 0)"></div>
+        <div class="text-xs text-red-600 mt-1">Failed</div>
+      </div>
+      <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-4 text-center">
+        <div class="text-3xl font-bold text-gray-400" x-text="results?.skipped ?? 0"></div>
+        <div class="text-xs text-gray-500 mt-1">Skipped</div>
+      </div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
+        <div class="text-3xl font-bold text-gray-400" x-text="results?.duration ?? 0"></div>
+        <div class="text-xs text-gray-500 mt-1">Duration (s)</div>
+      </div>
+    </div>
+
+    <!-- Tests by endpoint accordion -->
+    <template x-for="[endpoint, tests] in Object.entries(results?.by_endpoint ?? {})" :key="endpoint">
+      <div x-data="{ open: tests.some(t => t.outcome !== 'passed') }"
+           class="bg-gray-900 border rounded-xl overflow-hidden"
+           :class="tests.some(t => t.outcome !== 'passed') ? 'border-red-800' : 'border-green-900'">
+
+        <button @click="open = !open"
+                class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-gray-800/50 transition-colors">
+          <div class="flex items-center gap-3">
+            <span class="font-mono text-sm font-semibold"
+                  :class="tests.some(t => t.outcome !== 'passed') ? 'text-red-400' : 'text-green-400'"
+                  x-text="endpoint"></span>
+            <span class="text-xs text-gray-500" x-text="tests.length + ' tests'"></span>
+          </div>
+          <div class="flex items-center gap-4">
+            <span class="text-xs text-green-400"
+                  x-show="tests.filter(t => t.outcome === 'passed').length > 0"
+                  x-text="'✓ ' + tests.filter(t => t.outcome === 'passed').length + ' passed'"></span>
+            <span class="text-xs text-red-400"
+                  x-show="tests.filter(t => t.outcome !== 'passed' && t.outcome !== 'skipped').length > 0"
+                  x-text="'✗ ' + tests.filter(t => t.outcome !== 'passed' && t.outcome !== 'skipped').length + ' failed'"></span>
+            <svg class="w-4 h-4 text-gray-500 transition-transform" :class="open ? 'rotate-180' : ''"
+                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+        </button>
+
+        <div x-show="open" class="border-t border-gray-800 overflow-x-auto">
+          <table class="w-full text-sm table-fixed">
+            <thead>
+              <tr class="text-xs text-gray-500 uppercase bg-gray-950/50">
+                <th class="text-left px-5 py-2 font-medium w-2/5">Test</th>
+                <th class="text-left px-4 py-2 font-medium w-24">Status</th>
+                <th class="text-right px-4 py-2 font-medium w-20">Duration</th>
+                <th class="text-left px-4 py-2 font-medium">Error</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800">
+              <template x-for="test in tests" :key="test.name">
+                <tr class="hover:bg-gray-800/30">
+                  <td class="px-5 py-3 font-mono text-xs text-gray-200 overflow-hidden"
+                      :title="test.name.split('::').pop()"
+                      x-text="test.name.split('::').pop()"
+                      style="overflow-wrap: break-word; word-break: break-all;"></td>
+                  <td class="px-4 py-3">
+                    <span x-show="test.outcome === 'passed'"
+                          class="inline-flex items-center gap-1 text-xs text-green-400">
+                      <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span> PASSED
+                    </span>
+                    <span x-show="test.outcome === 'skipped'"
+                          class="inline-flex items-center gap-1 text-xs text-gray-500">
+                      <span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span> SKIPPED
+                    </span>
+                    <span x-show="test.outcome !== 'passed' && test.outcome !== 'skipped'"
+                          class="inline-flex items-center gap-1 text-xs text-red-400">
+                      <span class="w-1.5 h-1.5 rounded-full bg-red-400"></span> FAILED
+                    </span>
+                  </td>
+                  <td class="px-4 py-3 text-right text-xs text-gray-500 font-mono"
+                      x-text="test.duration + 's'"></td>
+                  <td class="px-4 py-3 text-xs text-gray-600 font-mono max-w-sm break-all"
+                      x-text="test.error_message ? test.error_message.slice(0, 120) : ''"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </template>
+  </div>
+
+</div>
+
+<script>
+function runTestsPage() {
+  return {
+    projectPath: '',
+    keyword: '',
+    workers: 1,
+    sleepMs: 0,
+    bypassName: '',
+    bypassValue: '',
+    showBypass: false,
+    pathOk: null,
+    pathError: '',
+    running: false,
+    logs: [],
+    results: null,
+    elapsed: 0,
+    _timer: null,
+    _runId: null,
+    allureReady: false,
+    alureCli: true,
+    allurePlugin: true,
+    allureStatus: '',   // '', 'opening', 'error'
+    allureError: '',
+    osPlatform: '',
+    _lastProjectPath: '',
+
+    init() {
+      if (this._initialized) return
+      this._initialized = true
+      const socket = io()
+      socket.off('run_log').on('run_log', (data) => {
+        if (data.run_id !== this._runId) return
+        this.logs.push(data.line)
+        this.$nextTick(() => {
+          const c = this.$refs.logContainer
+          if (c) c.scrollTop = c.scrollHeight
+        })
+      })
+      socket.off('run_done').on('run_done', (data) => {
+        if (data.run_id !== this._runId) return
+        this.running = false
+        this.results = data.results
+        this.allureReady = data.allure_ready || false
+        this.alureCli    = data.allure_cli !== false
+        this.allurePlugin = data.allure_plugin !== false
+        this.osPlatform  = data.os_platform || ''
+        this._lastProjectPath = data.project_path || this.projectPath
+        clearInterval(this._timer)
+      })
+      socket.off('run_error').on('run_error', (data) => {
+        if (data.run_id !== this._runId) return
+        this.running = false
+        this.logs.push('ERROR: ' + data.error)
+        clearInterval(this._timer)
+      })
+    },
+
+    async validatePath() {
+      if (!this.projectPath.trim()) { this.pathOk = null; return }
+      const res = await fetch('/validate-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: this.projectPath, type: 'autotest' }),
+      })
+      const data = await res.json()
+      this.pathOk = data.ok
+      this.pathError = data.ok ? '' : data.error
+    },
+
+    async runTests() {
+      this.results = null
+      this.logs = []
+      this.elapsed = 0
+      this.running = true
+      this._timer = setInterval(() => this.elapsed++, 1000)
+
+      const res = await fetch('/run-tests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_path:        this.projectPath,
+          keyword:             this.keyword.trim(),
+          workers:             parseInt(this.workers) || 1,
+          sleep_ms:            Math.max(0, parseInt(this.sleepMs) || 0),
+          bypass_header_name:  this.bypassName.trim(),
+          bypass_header_value: this.bypassValue.trim(),
+        }),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        this._runId = data.run_id
+      } else {
+        this.running = false
+        this.logs.push('Error: ' + data.error)
+        clearInterval(this._timer)
+      }
+    },
+
+    async stopTests() {
+      if (!this._runId) return
+      await fetch('/stop-tests/' + this._runId, { method: 'POST' })
+      this.running = false
+      clearInterval(this._timer)
+      this.logs.push('--- Stopped by user ---')
+    },
+
+    async openAllure() {
+      this.allureStatus = 'opening'
+      this.allureError  = ''
+      try {
+        const res  = await fetch('/allure/open', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ project_path: this._lastProjectPath }),
+        })
+        const data = await res.json()
+        if (data.ok) {
+          this.allureStatus = ''
+        } else {
+          this.allureStatus = 'error'
+          this.allureError  = data.error || 'Unknown error'
+        }
+      } catch (e) {
+        this.allureStatus = 'error'
+        this.allureError  = e.message
+      }
+    },
+
+    bypassPartiallyFilled() {
+      const hasName  = this.bypassName.trim()  !== ''
+      const hasValue = this.bypassValue.trim() !== ''
+      return hasName !== hasValue
+    },
+
+    formatTime(sec) {
+      const m = Math.floor(sec / 60).toString().padStart(2, '0')
+      const s = (sec % 60).toString().padStart(2, '0')
+      return `${m}:${s}`
+    },
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}UI Autotest Generator{% endblock %}</title>
+  <script src="{{ url_for('static', filename='js/tailwind.min.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/alpine.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 500: '#6366f1', 600: '#4f46e5' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .terminal { font-family: 'Menlo', 'Monaco', 'Courier New', monospace; }
+    .terminal div { white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+  <header class="border-b border-gray-800 px-6 py-3 flex items-center justify-between">
+    <a href="/" class="flex items-center gap-2 text-white font-semibold text-lg">
+      <svg class="w-6 h-6 text-brand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
+      </svg>
+      UI Autotest Generator
+    </a>
+    <div class="flex items-center gap-4">
+
+      <!-- Claude Code status -->
+      <div class="relative" x-data="claudeStatus()" x-init="init()">
+        <button @click="toggle()"
+                class="relative flex items-center gap-1.5 text-xs border rounded-lg px-3 py-1.5 transition-colors"
+                :class="{
+                  'text-red-400 border-red-900 hover:border-red-700':    statusCode === 'not_installed' || statusCode === 'not_authenticated',
+                  'text-green-400 border-gray-800 hover:border-gray-600': statusCode === 'ok',
+                  'text-gray-500 border-gray-800':                        statusCode === 'loading'
+                }">
+          <!-- dot indicator -->
+          <span class="w-1.5 h-1.5 rounded-full"
+                :class="{
+                  'bg-red-500':   statusCode === 'not_installed' || statusCode === 'not_authenticated',
+                  'bg-green-500 animate-pulse': statusCode === 'ok',
+                  'bg-gray-600':  statusCode === 'loading'
+                }"></span>
+          Claude Code
+          <!-- warning badge -->
+          <span x-show="statusCode === 'not_installed' || statusCode === 'not_authenticated'"
+                class="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">!</span>
+        </button>
+
+        <!-- Dropdown -->
+        <div x-show="open" @click.outside="open = false"
+             class="absolute right-0 top-full mt-2 w-80 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+
+          <!-- not installed -->
+          <div x-show="statusCode === 'not_installed'" class="p-4 space-y-2">
+            <div class="flex items-center gap-2 text-red-400 font-semibold text-sm">
+              <span class="w-2 h-2 rounded-full bg-red-500"></span> Claude Code not installed
+            </div>
+            <p class="text-xs text-gray-400">Claude CLI was not found on this machine.</p>
+            <code class="block text-xs text-gray-300 bg-gray-800 rounded px-3 py-2 mt-2">npm install -g @anthropic-ai/claude-code</code>
+          </div>
+
+          <!-- not authenticated -->
+          <div x-show="statusCode === 'not_authenticated'" class="p-4 space-y-2">
+            <div class="flex items-center gap-2 text-yellow-400 font-semibold text-sm">
+              <span class="w-2 h-2 rounded-full bg-yellow-500"></span> Not authenticated
+            </div>
+            <p class="text-xs text-gray-400">Claude Code is installed but you are not logged in.</p>
+            <code class="block text-xs text-gray-300 bg-gray-800 rounded px-3 py-2 mt-2">claude auth login</code>
+          </div>
+
+          <!-- ok -->
+          <div x-show="statusCode === 'ok'">
+            <div class="px-4 py-3 border-b border-gray-800">
+              <div class="flex items-center gap-2 text-green-400 text-sm font-semibold">
+                <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span> Claude Code ready
+              </div>
+              <p class="text-xs text-gray-500 mt-0.5" x-text="email"></p>
+              <span class="inline-block mt-1 text-[10px] uppercase tracking-wide bg-indigo-900/60 text-indigo-300 border border-indigo-800 rounded px-1.5 py-0.5" x-text="plan"></span>
+            </div>
+            <div class="px-4 py-3 grid grid-cols-2 gap-3">
+              <div class="bg-gray-800/60 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold text-white" x-text="todayMessages"></div>
+                <div class="text-[10px] text-gray-500 mt-0.5">messages today</div>
+              </div>
+              <div class="bg-gray-800/60 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold text-white" x-text="weekMessages"></div>
+                <div class="text-[10px] text-gray-500 mt-0.5">messages this week</div>
+              </div>
+            </div>
+            <!-- Probe result -->
+            <div class="px-4 pb-2">
+              <div x-show="probing" class="flex items-center gap-1.5 text-xs text-gray-500">
+                <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                Checking availability...
+              </div>
+              <div x-show="!probing && probeStatus === 'ok'"
+                   class="flex items-center gap-1.5 text-xs text-green-400">
+                <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span> Claude is responding
+              </div>
+              <div x-show="!probing && probeStatus === 'rate_limited'"
+                   class="space-y-1">
+                <div class="flex items-center gap-1.5 text-xs text-red-400">
+                  <span class="w-1.5 h-1.5 rounded-full bg-red-400"></span> Rate limit reached
+                </div>
+                <div class="text-xs text-gray-500">
+                  Daily limit resets at <span class="text-gray-300" x-text="resetAt"></span>
+                  <span class="text-gray-600 ml-1">(in <span x-text="resetIn"></span>)</span>
+                </div>
+              </div>
+              <div x-show="!probing && probeStatus === 'error'"
+                   class="space-y-0.5">
+                <div class="flex items-center gap-1.5 text-xs text-yellow-400">
+                  <span class="w-1.5 h-1.5 rounded-full bg-yellow-400"></span> Claude did not respond
+                </div>
+                <div class="text-xs text-gray-500 pl-3">Check your usage limits at <span class="text-gray-300">claude.ai/settings</span></div>
+              </div>
+            </div>
+            <div class="px-4 pb-3 flex justify-end">
+              <button @click="refresh()" :disabled="probing"
+                      class="text-xs text-gray-500 hover:text-white disabled:opacity-40 transition-colors">↻ Refresh</button>
+            </div>
+          </div>
+
+          <!-- loading -->
+          <div x-show="statusCode === 'loading'" class="px-4 py-4 flex items-center gap-2 text-xs text-gray-500">
+            <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            Checking...
+          </div>
+        </div>
+      </div>
+
+      <span class="text-gray-700">|</span>
+
+      <!-- Stack updater -->
+      <div class="relative" x-data="stackUpdater()" x-init="init()">
+        <button @click="toggle()"
+                class="relative flex items-center gap-1.5 text-xs text-gray-400 hover:text-white border border-gray-800 hover:border-gray-600 rounded-lg px-3 py-1.5 transition-colors">
+          <svg class="w-3.5 h-3.5" :class="loading ? 'animate-spin' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+          Stack
+          <span x-show="updatesAvailable > 0"
+                class="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-yellow-500 text-gray-900 text-[10px] font-bold flex items-center justify-center"
+                x-text="updatesAvailable"></span>
+        </button>
+
+        <!-- Dropdown panel -->
+        <div x-show="open" @click.outside="open = false"
+             class="absolute right-0 top-full mt-2 w-[480px] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+
+          <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+            <span class="text-sm font-semibold text-white">Stack versions</span>
+            <button @click="refresh()" class="text-xs text-gray-500 hover:text-white transition-colors">↻ Refresh</button>
+          </div>
+
+          <!-- Loading skeleton -->
+          <div x-show="loading" class="px-4 py-4 space-y-3">
+            <template x-for="i in 7">
+              <div class="flex items-center gap-3 animate-pulse">
+                <div class="h-3 bg-gray-800 rounded w-32"></div>
+                <div class="h-3 bg-gray-800 rounded w-12 ml-auto"></div>
+                <div class="h-3 bg-gray-800 rounded w-12"></div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Error -->
+          <div x-show="!loading && error" class="px-4 py-4 text-xs text-red-400" x-text="error"></div>
+
+          <!-- Package list -->
+          <div x-show="!loading && !error" class="divide-y divide-gray-800">
+            <template x-for="pkg in packages" :key="pkg.id">
+              <div class="px-4 py-2.5 flex items-center gap-3">
+                <span class="text-xs text-gray-300 w-36 shrink-0" x-text="pkg.label"></span>
+                <span class="text-xs font-mono text-gray-500" x-text="pkg.current"></span>
+                <svg x-show="!pkg.up_to_date" class="w-3 h-3 text-yellow-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/>
+                </svg>
+                <span x-show="!pkg.up_to_date" class="text-xs font-mono text-yellow-400" x-text="pkg.latest"></span>
+                <span x-show="pkg.up_to_date" class="text-xs text-green-600 ml-auto">✓ up to date</span>
+
+                <button x-show="!pkg.up_to_date"
+                        @click="update(pkg)"
+                        :disabled="pkg.updating"
+                        class="ml-auto shrink-0 text-xs bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-2.5 py-1 rounded-md transition-colors flex items-center gap-1">
+                  <svg x-show="pkg.updating" class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                  </svg>
+                  <span x-text="pkg.updating ? 'Updating...' : 'Update'"></span>
+                </button>
+              </div>
+            </template>
+          </div>
+
+          <div x-show="!loading && statusMsg"
+               :class="statusMsg.startsWith('✓') ? 'text-green-400' : 'text-red-400'"
+               class="px-4 py-2.5 text-xs border-t border-gray-800" x-text="statusMsg"></div>
+        </div>
+      </div>
+
+      <span class="text-gray-700">|</span>
+      <a href="/run-tests" class="text-xs text-gray-400 hover:text-white transition-colors">▶ Run Tests</a>
+      <span class="text-gray-700">|</span>
+      <span class="text-xs text-gray-500">Playwright + Python + Claude Code</span>
+      <button onclick="stopServer()"
+              class="flex items-center gap-1.5 text-xs text-gray-500 hover:text-red-400 border border-gray-800
+                     hover:border-red-800 rounded-lg px-3 py-1.5 transition-colors">
+        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+          <rect x="5" y="5" width="10" height="10" rx="1"/>
+        </svg>
+        Stop Server
+      </button>
+    </div>
+
+    <script>
+    function claudeStatus() {
+      return {
+        open:          false,
+        statusCode:    'loading',   // loading | not_installed | not_authenticated | ok
+        email:         '',
+        plan:          '',
+        todayMessages: 0,
+        weekMessages:  0,
+        probing:       false,
+        probeStatus:   '',   // '' | 'ok' | 'rate_limited' | 'error'
+        resetIn:       '',
+        resetAt:       '',
+
+        init() { this.refresh() },
+
+        toggle() { this.open = !this.open },
+
+        async refresh() {
+          this.statusCode = 'loading'
+          this.probeStatus = ''
+          try {
+            const res  = await fetch('/claude-status')
+            const data = await res.json()
+            this.statusCode    = data.status
+            this.email         = data.email          || ''
+            this.plan          = data.plan           || ''
+            this.todayMessages = data.today_messages || 0
+            this.weekMessages  = data.week_messages  || 0
+          } catch (e) {
+            this.statusCode = 'not_installed'
+            return
+          }
+          if (this.statusCode === 'ok') {
+            this.probing = true
+            try {
+              const r = await fetch('/claude-probe', { method: 'POST' })
+              const d = await r.json()
+              if (d.reachable) {
+                this.probeStatus = 'ok'
+              } else if (d.rate_limited) {
+                this.probeStatus = 'rate_limited'
+                this.resetIn = d.reset_in || ''
+                this.resetAt = d.reset_at || ''
+              } else {
+                this.probeStatus = 'error'
+              }
+            } catch (e) {
+              this.probeStatus = 'error'
+            } finally {
+              this.probing = false
+            }
+          }
+        },
+      }
+    }
+
+    function stackUpdater() {
+      return {
+        open:            false,
+        loading:         false,
+        packages:        [],
+        error:           '',
+        statusMsg:       '',
+        updatesAvailable: 0,
+
+        init() {
+          this.refresh()
+        },
+
+        toggle() {
+          this.open = !this.open
+          if (this.open && !this.packages.length) this.refresh()
+        },
+
+        async refresh() {
+          this.loading  = true
+          this.error    = ''
+          this.statusMsg = ''
+          try {
+            const res  = await fetch('/stack-status')
+            const data = await res.json()
+            this.packages = data.packages.map(p => ({ ...p, updating: false }))
+            this.updatesAvailable = this.packages.filter(p => !p.up_to_date).length
+          } catch (e) {
+            this.error = 'Could not load stack status: ' + e.message
+          } finally {
+            this.loading = false
+          }
+        },
+
+        async update(pkg) {
+          pkg.updating  = true
+          this.statusMsg = ''
+          try {
+            const res  = await fetch('/stack-update', {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ package: pkg.id }),
+            })
+            const data = await res.json()
+            if (data.ok) {
+              pkg.current    = data.version
+              pkg.up_to_date = pkg.current === pkg.latest
+              this.updatesAvailable = this.packages.filter(p => !p.up_to_date).length
+              this.statusMsg = `✓ ${pkg.label} updated to ${data.version}`
+            } else {
+              this.statusMsg = `✗ ${pkg.label}: ` + (data.error || 'unknown error')
+            }
+          } catch (e) {
+            this.statusMsg = '✗ Network error: ' + e.message
+          } finally {
+            pkg.updating = false
+          }
+        },
+      }
+    }
+    </script>
+  </header>
+
+  <div id="shutdown-overlay"
+       style="display:none; position:fixed; inset:0; background:rgba(3,7,18,0.92);
+              z-index:9999; display:none; align-items:center; justify-content:center;">
+    <div class="text-center space-y-3">
+      <div class="w-12 h-12 rounded-full bg-red-900/50 border border-red-700 flex items-center justify-center mx-auto">
+        <svg class="w-6 h-6 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+          <rect x="5" y="5" width="10" height="10" rx="1"/>
+        </svg>
+      </div>
+      <p class="text-white font-semibold">Server stopped</p>
+      <p class="text-gray-400 text-sm">You can close this tab</p>
+    </div>
+  </div>
+
+  <script>
+    async function stopServer() {
+      if (!confirm('Stop the server?')) return
+      try {
+        await fetch('/shutdown', { method: 'POST' })
+      } catch (_) {}
+      document.getElementById('shutdown-overlay').style.display = 'flex'
+    }
+  </script>
+  <main class="p-6 max-w-7xl mx-auto">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
