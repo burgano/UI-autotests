@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Flask / app runtime
+instance/
+*.log
+
+# Sensitive / personal data
+# localStorage cache lives in the browser, but any server-side session data:
+flask_session/
+.session
+
+# Job history and results (runtime data, not source)
+jobs/
+.jobs/
+
+# Claude usage stats and local config that may contain personal info
+.claude_stats.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files (may contain API keys, tokens)
+.env
+.env.local
+.env.*.local

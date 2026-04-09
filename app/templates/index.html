@@ -1,0 +1,634 @@
+{% extends "base.html" %}
+{% block title %}Configure - UI Autotest Generator{% endblock %}
+{% block content %}
+
+<div x-data="appForm()" x-init="init()" class="space-y-6">
+
+  <!-- ── Top bar ──────────────────────────────────────────────────── -->
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-white">New Test Generation</h1>
+    <div class="text-sm text-gray-400 text-right">
+      Est. tests: <span class="text-white font-mono" x-text="estimate.estimated_tests ?? '-'"></span>
+      <span x-show="mode === 'explore'" class="text-gray-600 text-xs ml-1">(~20 URLs × <span x-text="(parseInt(maxPositive)||3) + (parseInt(maxNegative)||4)"></span> tests)</span>
+      <span x-show="mode === 'specific'" class="text-gray-600 text-xs ml-1">(<span x-text="urls.filter(u=>u.trim()).length"></span> URL × <span x-text="(parseInt(maxPositive)||3) + (parseInt(maxNegative)||4)"></span> tests)</span>
+      &nbsp;·&nbsp; Est. cost:
+      <span class="text-green-400 font-mono" x-text="estimate.estimated_cost_usd != null ? '$' + estimate.estimated_cost_usd : '-'"></span>
+    </div>
+  </div>
+
+  <!-- ── Model warning banner ─────────────────────────────────────── -->
+  <div x-show="estimate.warning" x-cloak
+       class="bg-yellow-900/40 border border-yellow-700 rounded-lg px-4 py-3 text-yellow-300 text-sm flex items-center gap-2">
+    <svg class="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+      <path d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z"/>
+    </svg>
+    <span x-text="estimate.warning"></span>
+  </div>
+
+  <form @submit.prevent="submit()" class="space-y-6">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+      <!-- ── LEFT: Paths ─────────────────────────────────────────── -->
+      <div class="space-y-4">
+
+        <!-- Card: Project Paths -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Project Paths</h2>
+
+          <!-- Autotest path -->
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">
+              Autotest Project Path
+              <span class="text-red-400">*</span>
+              <span class="text-xs text-gray-500 ml-1">(must exist on your machine)</span>
+            </label>
+            <div class="flex gap-2">
+              <input type="text" x-model="autotestPath" @blur="validatePath('autotest')"
+                     placeholder="/path/to/my-autotests"
+                     class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                            focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                     :class="pathStatus.autotest === false ? 'border-red-500' : pathStatus.autotest === true ? 'border-green-500' : ''" />
+              <span x-show="pathStatus.autotest === true" class="text-green-400 self-center">✓</span>
+              <span x-show="pathStatus.autotest === false" class="text-red-400 self-center">✗</span>
+            </div>
+            <p x-show="pathErrors.autotest" x-text="pathErrors.autotest"
+               class="text-red-400 text-xs mt-1"></p>
+          </div>
+
+          <!-- Frontend path -->
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">
+              Frontend Project Path
+              <span class="text-xs text-gray-500 ml-1">(optional)</span>
+            </label>
+            <div class="flex gap-2">
+              <input type="text" x-model="frontendPath" @blur="validatePath('frontend')"
+                     placeholder="/path/to/frontend-repo"
+                     class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                            focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                     :class="pathStatus.frontend === false ? 'border-red-500' : pathStatus.frontend === true ? 'border-green-500' : ''" />
+              <span x-show="pathStatus.frontend === true" class="text-green-400 self-center">✓</span>
+              <span x-show="pathStatus.frontend === false" class="text-red-400 self-center">✗</span>
+            </div>
+            <p x-show="pathErrors.frontend" x-text="pathErrors.frontend"
+               class="text-red-400 text-xs mt-1"></p>
+            <p x-show="!pathErrors.frontend" class="text-xs text-gray-600 mt-1">
+              Local clone of the frontend repo. Skips browser scan and gives Claude deep access to components, validators, and API calls — significantly improves test quality.
+            </p>
+          </div>
+
+        </div>
+
+        <!-- Card: Credentials -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+            Credentials
+            <span class="text-xs text-gray-500 font-normal ml-1">(optional)</span>
+          </h2>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-gray-400 mb-1">Login</label>
+              <input type="text" x-model="login" placeholder="user@example.com"
+                     autocomplete="off"
+                     :class="credPartiallyFilled() && !login.trim()
+                               ? 'border-red-500 focus:border-red-500'
+                               : 'border-gray-700 focus:border-brand-500'"
+                     class="w-full bg-gray-800 border rounded-lg px-3 py-2 text-sm focus:outline-none" />
+              <p x-show="credPartiallyFilled() && !login.trim()"
+                 class="text-red-400 text-xs mt-1">Login is required</p>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-400 mb-1">Password</label>
+              <input type="password" x-model="password" placeholder="••••••••"
+                     autocomplete="off"
+                     :class="credPartiallyFilled() && !password.trim()
+                               ? 'border-red-500 focus:border-red-500'
+                               : 'border-gray-700 focus:border-brand-500'"
+                     class="w-full bg-gray-800 border rounded-lg px-3 py-2 text-sm focus:outline-none" />
+              <p x-show="credPartiallyFilled() && !password.trim()"
+                 class="text-red-400 text-xs mt-1">Password is required</p>
+            </div>
+          </div>
+          <div x-show="login || password" class="mt-2">
+            <label class="block text-xs text-gray-400 mb-1">
+              Login URL
+              <span class="text-xs text-gray-600 ml-1">- page where the login form is located</span>
+            </label>
+            <input type="text" x-model="loginUrl" placeholder="/login"
+                   :class="credPartiallyFilled() && !loginUrl.trim()
+                               ? 'border-red-500 focus:border-red-500'
+                               : 'border-gray-700 focus:border-brand-500'"
+                   class="w-full bg-gray-800 border rounded-lg px-3 py-2 text-sm focus:outline-none font-mono" />
+            <p x-show="credPartiallyFilled() && !loginUrl.trim()"
+               class="text-red-400 text-xs mt-1">Login URL is required</p>
+          </div>
+        </div>
+
+        <!-- Card: Model -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+          <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">AI Model</h2>
+          <div class="flex items-center gap-3">
+            <select x-model="selectedModel" @change="fetchEstimate()"
+                    class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                           focus:outline-none focus:border-brand-500">
+              {% for key, info in models.items() %}
+              <option value="{{ key }}" {% if key == default_model %}selected{% endif %}>{{ info.label }}</option>
+              {% endfor %}
+            </select>
+            <div x-show="estimate.recommended" class="text-xs text-gray-400 shrink-0">
+              Recommended: <span class="text-indigo-400 font-semibold" x-text="estimate.recommended"></span>
+            </div>
+          </div>
+
+          <!-- Budget per endpoint -->
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">
+              Budget per endpoint
+              <span class="text-gray-600 ml-1">- max Claude spend per URL (safety ceiling, not charged upfront)</span>
+            </label>
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500 text-sm">$</span>
+              <input type="number" x-model="budgetUsd" min="0.50" max="20" step="0.50"
+                     class="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                            focus:outline-none focus:border-brand-500 font-mono" />
+              <span class="text-xs text-gray-600">per URL · actual spend is usually much lower</span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Card: Test Execution -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+          <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Test Execution</h2>
+
+          <!-- Parallel workers -->
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">
+              Parallel workers
+              <span class="text-gray-600 ml-1">- number of browsers running tests simultaneously</span>
+            </label>
+            <div class="flex items-center gap-3">
+              <select @change="workers = parseInt($event.target.value)"
+                      class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                             focus:outline-none focus:border-brand-500 font-mono">
+                <template x-for="n in [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]" :key="n">
+                  <option :value="n" :selected="n === workers" x-text="n === 1 ? '1 (off)' : n"></option>
+                </template>
+              </select>
+              <span class="text-xs text-gray-600">
+                <span x-show="workers == 1">Sequential - safest for rate-limited sites</span>
+                <span x-show="workers > 1" x-text="'~' + Math.round(100 / workers) + '% of original duration'"></span>
+              </span>
+            </div>
+          </div>
+
+          <!-- Sleep between tests -->
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">
+              Delay between tests
+              <span class="text-gray-600 ml-1">- pause after each test to avoid overloading slow sites</span>
+            </label>
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-2">
+                <input type="number" x-model="sleepMs" min="0" max="10000" step="100"
+                       class="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                              focus:outline-none focus:border-brand-500 font-mono" />
+                <span class="text-xs text-gray-500">ms</span>
+              </div>
+              <span class="text-xs text-gray-600">
+                <span x-show="sleepMs == 0">No delay - fastest, for local/staging</span>
+                <span x-show="sleepMs > 0" x-text="(sleepMs / 1000).toFixed(1) + 's pause after each test'"></span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ── RIGHT: Test Config ──────────────────────────────────── -->
+      <div class="space-y-4">
+
+        <!-- Card: Base URL + Mode -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Test Configuration</h2>
+
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Base URL <span class="text-red-400">*</span></label>
+            <input type="url" x-model="baseUrl" @change="fetchEstimate()"
+                   placeholder="https://my-app.example.com"
+                   :class="baseUrlTouched && !baseUrl.trim() ? 'border-red-500' : 'border-gray-700'"
+                   @blur="baseUrlTouched = true"
+                   class="w-full bg-gray-800 border rounded-lg px-3 py-2 text-sm
+                          focus:outline-none focus:border-brand-500" />
+            <p x-show="baseUrlTouched && !baseUrl.trim()" class="text-red-400 text-xs mt-1">Base URL is required</p>
+          </div>
+
+          <!-- Mode radio -->
+          <div>
+            <label class="block text-sm text-gray-400 mb-2">Test Scope</label>
+            <div class="flex gap-4">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="mode" value="specific" x-model="mode" @change="fetchEstimate()"
+                       class="text-brand-500 focus:ring-brand-500" />
+                <span class="text-sm text-gray-200">Specific URLs</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="mode" value="explore" x-model="mode" @change="fetchEstimate()"
+                       class="text-brand-500 focus:ring-brand-500" />
+                <span class="text-sm text-gray-200">Explore all sections</span>
+              </label>
+            </div>
+            <p x-show="mode === 'explore'" class="text-xs text-gray-500 mt-1">
+              All routes from the frontend project will be analyzed automatically (up to 50).
+            </p>
+          </div>
+        </div>
+
+        <!-- Card: URLs -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3"
+             :class="mode === 'explore' ? 'opacity-50 pointer-events-none' : ''">
+          <div class="flex items-center justify-between">
+            <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+              URLs to Test
+              <span class="text-xs text-gray-500 font-normal ml-1">(up to 20)</span>
+            </h2>
+            <button type="button" @click="addUrl()"
+                    :disabled="urls.length >= 20"
+                    class="text-xs text-brand-500 hover:text-brand-400 disabled:opacity-40">
+              + Add URL
+            </button>
+          </div>
+
+          <template x-for="(url, i) in urls" :key="i">
+            <div class="space-y-1">
+              <div class="flex gap-2 items-center">
+                <input type="text" x-model="urls[i]" @input="fetchEstimate()"
+                       placeholder="/login"
+                       class="flex-1 bg-gray-800 border rounded-lg px-3 py-2 text-sm
+                              focus:outline-none font-mono transition-colors"
+                       :class="isDuplicate(i)
+                         ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500'
+                         : isEmptyUrl(i)
+                           ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500'
+                           : 'border-gray-700 focus:border-brand-500 focus:ring-1 focus:ring-brand-500'" />
+                <button type="button" @click="removeUrl(i)"
+                        x-show="urls.length > 1"
+                        class="text-gray-600 hover:text-red-400 text-lg leading-none shrink-0">×</button>
+              </div>
+              <p x-show="isDuplicate(i)" class="text-red-400 text-xs pl-1">
+                Duplicate - this endpoint is already in the list
+              </p>
+              <p x-show="!isDuplicate(i) && isEmptyUrl(i)" class="text-red-400 text-xs pl-1">
+                URL cannot be empty
+              </p>
+            </div>
+          </template>
+        </div>
+
+        <!-- Card: Test Types -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+          <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Test Types</h2>
+
+          <!-- Positive -->
+          <div class="flex items-center gap-3">
+            <label class="flex items-center gap-3 cursor-pointer flex-1">
+              <input type="checkbox" x-model="includePositive"
+                     @change="onTestTypeChange()"
+                     :disabled="includePositive && !includeNegative"
+                     class="w-4 h-4 rounded text-brand-500 focus:ring-brand-500 bg-gray-800 border-gray-600
+                            disabled:opacity-40 disabled:cursor-not-allowed" />
+              <div>
+                <span class="text-sm text-gray-200 font-medium">Positive tests</span>
+                <p class="text-xs text-gray-500">Happy path, valid inputs, buttons work as expected</p>
+              </div>
+            </label>
+            <div x-show="includePositive" class="flex items-center gap-1.5 shrink-0">
+              <span class="text-xs text-gray-500">max</span>
+              <input type="number" x-model="maxPositive" min="1" max="999" step="1"
+                     placeholder="3"
+                     class="w-16 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-center
+                            font-mono focus:outline-none focus:border-brand-500"
+                     @input="fetchEstimate()" />
+            </div>
+          </div>
+
+          <!-- Negative -->
+          <div class="flex items-center gap-3">
+            <label class="flex items-center gap-3 cursor-pointer flex-1">
+              <input type="checkbox" x-model="includeNegative"
+                     @change="onTestTypeChange()"
+                     :disabled="includeNegative && !includePositive"
+                     class="w-4 h-4 rounded text-brand-500 focus:ring-brand-500 bg-gray-800 border-gray-600
+                            disabled:opacity-40 disabled:cursor-not-allowed" />
+              <div>
+                <span class="text-sm text-gray-200 font-medium">Negative tests</span>
+                <p class="text-xs text-gray-500">Empty fields, invalid formats, boundary values, auth guards</p>
+              </div>
+            </label>
+            <div x-show="includeNegative" class="flex items-center gap-1.5 shrink-0">
+              <span class="text-xs text-gray-500">max</span>
+              <input type="number" x-model="maxNegative" min="1" max="999" step="1"
+                     placeholder="4"
+                     class="w-16 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-center
+                            font-mono focus:outline-none focus:border-brand-500"
+                     @input="fetchEstimate()" />
+            </div>
+          </div>
+
+          <p x-show="!includePositive && !includeNegative"
+             class="text-red-400 text-xs">Select at least one test type</p>
+        </div>
+
+        <!-- Card: Bypass Header -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+          <div>
+            <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Anti-Bot Bypass Header
+              <span class="text-xs text-gray-500 font-normal ml-1">(optional)</span>
+            </h2>
+            <p class="text-xs text-gray-500 mt-1.5">
+              If your site has bot protection, you can configure a special HTTP header that tells the server: "this is a trusted test, let it through". Provide the header name and value here, and on the server add a rule: if a request contains this header - skip the check. This is not sent to third-party sites and stays only in your project.
+            </p>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-gray-400 mb-1">Header name</label>
+              <input type="text" x-model="bypassHeaderName"
+                     placeholder="X-Test-Bypass"
+                     :class="bypassPartiallyFilled() && !bypassHeaderName.trim() ? 'border-red-500' : 'border-gray-700'"
+                     class="w-full bg-gray-800 border rounded-lg px-3 py-2 text-sm
+                            focus:outline-none focus:border-brand-500 font-mono" />
+              <p x-show="bypassPartiallyFilled() && !bypassHeaderName.trim()"
+                 class="text-red-400 text-xs mt-1">Header name is required</p>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-400 mb-1">Header value</label>
+              <input type="text" x-model="bypassHeaderValue"
+                     placeholder="my-secret-token"
+                     :class="bypassPartiallyFilled() && !bypassHeaderValue.trim() ? 'border-red-500' : 'border-gray-700'"
+                     class="w-full bg-gray-800 border rounded-lg px-3 py-2 text-sm
+                            focus:outline-none focus:border-brand-500 font-mono" />
+              <p x-show="bypassPartiallyFilled() && !bypassHeaderValue.trim()"
+                 class="text-red-400 text-xs mt-1">Header value is required</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── Submit ──────────────────────────────────────────────────── -->
+    <div class="flex items-center justify-between pt-2">
+      <p x-show="formError" x-text="formError" class="text-red-400 text-sm"></p>
+      <div class="ml-auto flex items-center gap-3">
+        <button type="button" @click="resetForm()"
+                class="text-sm text-gray-500 hover:text-gray-300 border border-gray-700 hover:border-gray-500
+                       px-4 py-3 rounded-xl transition-colors">
+          Reset
+        </button>
+        <button type="submit"
+                :disabled="submitting || pathStatus.autotest !== true || !baseUrl.trim() || (!includePositive && !includeNegative) || hasDuplicateUrls() || hasEmptyUrls() || credPartiallyFilled() || bypassPartiallyFilled()"
+                class="bg-brand-600 hover:bg-brand-500 disabled:opacity-50 disabled:cursor-not-allowed
+                       text-white font-semibold px-8 py-3 rounded-xl transition-colors flex items-center gap-2">
+          <span x-show="!submitting">Generate Tests →</span>
+          <span x-show="submitting">Starting...</span>
+        </button>
+      </div>
+    </div>
+
+  </form>
+</div>
+
+<script>
+function appForm() {
+  return {
+    autotestPath: '',
+    frontendPath: '',
+    baseUrl: '',
+    baseUrlTouched: false,
+    login: '',
+    password: '',
+    loginUrl: '/login',
+    mode: 'specific',
+    urls: ['/'],
+    workers: 1,
+    sleepMs: 0,
+    bypassHeaderName: '',
+    bypassHeaderValue: '',
+    includePositive: true,
+    includeNegative: true,
+    maxPositive: '3',
+    maxNegative: '4',
+    selectedModel: '{{ default_model }}',
+    budgetUsd: 3.00,
+    pathStatus: { autotest: null, frontend: null },
+    pathErrors: { autotest: '', frontend: '' },
+    estimate: {},
+    formError: '',
+    submitting: false,
+
+    init() {
+      this._loadFromStorage()
+      this.$watch('urls', () => this.fetchEstimate())
+      this.fetchEstimate()
+    },
+
+    _storageKey: 'uiag_form_v1',
+
+    _saveToStorage() {
+      try {
+        localStorage.setItem(this._storageKey, JSON.stringify({
+          autotestPath:      this.autotestPath,
+          frontendPath:      this.frontendPath,
+          baseUrl:           this.baseUrl,
+          login:             this.login,
+          loginUrl:          this.loginUrl,
+          mode:              this.mode,
+          urls:              this.urls,
+          workers:           this.workers,
+          sleepMs:           this.sleepMs,
+          bypassHeaderName:  this.bypassHeaderName,
+          bypassHeaderValue: this.bypassHeaderValue,
+          includePositive:   this.includePositive,
+          includeNegative:   this.includeNegative,
+          maxPositive:       this.maxPositive,
+          maxNegative:       this.maxNegative,
+          selectedModel:     this.selectedModel,
+          budgetUsd:         this.budgetUsd,
+        }))
+      } catch(e) {}
+    },
+
+    _loadFromStorage() {
+      try {
+        const raw = localStorage.getItem(this._storageKey)
+        if (!raw) return
+        const s = JSON.parse(raw)
+        const fields = ['autotestPath','frontendPath','baseUrl','login','loginUrl',
+                        'mode','urls','workers','sleepMs','bypassHeaderName',
+                        'bypassHeaderValue','includePositive','includeNegative',
+                        'maxPositive','maxNegative','selectedModel','budgetUsd']
+        fields.forEach(f => { if (s[f] !== undefined) this[f] = s[f] })
+        // Re-validate paths silently if they were filled
+        if (this.autotestPath) this.validatePath('autotest')
+        if (this.frontendPath)  this.validatePath('frontend')
+      } catch(e) {}
+    },
+
+    onTestTypeChange() {
+      // Prevent both being unchecked
+      if (!this.includePositive && !this.includeNegative) {
+        this.includeNegative = true
+      }
+      this.fetchEstimate()
+    },
+
+    addUrl() {
+      if (this.urls.length < 20) this.urls.push('')
+    },
+
+    removeUrl(i) {
+      this.urls.splice(i, 1)
+    },
+
+    isDuplicate(i) {
+      const val = (this.urls[i] || '').trim()
+      if (!val) return false
+      return this.urls.some((u, j) => j !== i && u.trim() === val)
+    },
+
+    hasDuplicateUrls() {
+      return this.urls.some((_, i) => this.isDuplicate(i))
+    },
+
+    isEmptyUrl(i) {
+      return (this.urls[i] || '').trim() === ''
+    },
+
+    hasEmptyUrls() {
+      return this.urls.some((_, i) => this.isEmptyUrl(i))
+    },
+
+    resetForm() {
+      try { localStorage.removeItem(this._storageKey) } catch(e) {}
+      this.autotestPath      = ''
+      this.frontendPath      = ''
+      this.baseUrl           = ''
+      this.baseUrlTouched    = false
+      this.login             = ''
+      this.password          = ''
+      this.loginUrl          = '/login'
+      this.mode              = 'specific'
+      this.urls              = ['/']
+      this.workers           = 1
+      this.sleepMs           = 0
+      this.bypassHeaderName  = ''
+      this.bypassHeaderValue = ''
+      this.includePositive   = true
+      this.includeNegative   = true
+      this.maxPositive       = '3'
+      this.maxNegative       = '4'
+      this.selectedModel     = '{{ default_model }}'
+      this.budgetUsd         = 3.00
+      this.pathStatus        = { autotest: null, frontend: null }
+      this.pathErrors        = { autotest: '', frontend: '' }
+      this.formError         = ''
+      this.fetchEstimate()
+    },
+
+    credPartiallyFilled() {
+      const hasLogin    = this.login.trim()    !== ''
+      const hasPassword = this.password.trim() !== ''
+      const hasUrl      = this.loginUrl.trim() !== ''
+      const anyFilled   = hasLogin || hasPassword
+      // If any field is filled, all three are required
+      return anyFilled && !(hasLogin && hasPassword && hasUrl)
+    },
+    bypassPartiallyFilled() {
+      const hasName  = this.bypassHeaderName.trim()  !== ''
+      const hasValue = this.bypassHeaderValue.trim() !== ''
+      return hasName !== hasValue  // one filled, the other empty
+    },
+
+    async validatePath(type) {
+      const path = type === 'autotest' ? this.autotestPath : this.frontendPath
+      if (!path) { this.pathStatus[type] = null; return }
+      const res = await fetch('/validate-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, type }),
+      })
+      const data = await res.json()
+      this.pathStatus[type] = data.ok
+      this.pathErrors[type] = data.ok ? '' : data.error
+      this.fetchEstimate()
+    },
+
+    async fetchEstimate() {
+      const urlCount = this.mode === 'specific'
+        ? this.urls.filter(u => u.trim()).length
+        : 20
+      const res = await fetch('/estimate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url_count:        urlCount,
+          include_positive: this.includePositive,
+          include_negative: this.includeNegative,
+          max_positive:     parseInt(this.maxPositive) || 0,
+          max_negative:     parseInt(this.maxNegative) || 0,
+          model:            this.selectedModel,
+        }),
+      })
+      this.estimate = await res.json()
+    },
+
+    async submit() {
+      this.formError = ''
+      if (this.pathStatus.autotest !== true) {
+        this.formError = 'Please provide a valid autotest project path first.'
+        return
+      }
+      if (!this.baseUrl.trim()) {
+        this.baseUrlTouched = true
+        this.formError = 'Base URL is required.'
+        return
+      }
+      this._saveToStorage()
+      this.submitting = true
+      const res = await fetch('/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          autotest_path:    this.autotestPath,
+          frontend_path:    this.frontendPath,
+          base_url:         this.baseUrl,
+          workers:          parseInt(this.workers),
+          sleep_ms:         Math.max(0, parseInt(this.sleepMs) || 0),
+          bypass_header:    (this.bypassHeaderName.trim() && this.bypassHeaderValue.trim())
+                              ? { name: this.bypassHeaderName.trim(), value: this.bypassHeaderValue.trim() }
+                              : null,
+          urls:             this.urls.filter(u => u.trim()),
+          mode:             this.mode,
+          login:            this.login,
+          password:         this.password,
+          login_url:        this.login ? (this.loginUrl || '/login') : '',
+          include_positive: this.includePositive,
+          include_negative: this.includeNegative,
+          max_positive:     parseInt(this.maxPositive) || 0,
+          max_negative:     parseInt(this.maxNegative) || 0,
+          model:            this.selectedModel,
+          budget_usd:       parseFloat(this.budgetUsd) || 3.00,
+        }),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        window.location.href = '/run/' + data.job_id
+      } else {
+        this.formError = data.error || 'Unknown error'
+        this.submitting = false
+      }
+    },
+  }
+}
+</script>
+{% endblock %}

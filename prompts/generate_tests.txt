@@ -1,0 +1,8 @@
+Generate Playwright Python tests for the given endpoint.
+Apply these test design techniques:
+1. Equivalence Partitioning — one test per valid/invalid class per input field
+2. Boundary Value Analysis — test min-1, min, max, max+1 for length-constrained fields
+3. Negative Path — empty required fields, wrong data types, special characters
+4. State-based — multi-step flows: try to skip steps
+5. Error Message Verification — assert error messages appear for invalid inputs
+6. Auth Guard — if auth_required: verify unauthenticated redirect to /login
