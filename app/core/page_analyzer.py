@@ -48,7 +48,7 @@ def analyze_page(
                 _do_login(page, login_url, login, password)
 
             page.goto(url, wait_until="domcontentloaded")
-            page.wait_for_load_state("networkidle", timeout=8000)
+            _wait_for_spa_render(page)
         except PWTimeout:
             pass  # Partial load is fine - extract what's available
         except Exception as e:
@@ -99,10 +99,7 @@ def analyze_pages(
             nav_error = None
             try:
                 page.goto(full_url, wait_until="domcontentloaded")
-                try:
-                    page.wait_for_load_state("networkidle", timeout=8000)
-                except Exception:
-                    pass  # Partial load is fine - extract what's available
+                _wait_for_spa_render(page)
             except Exception as e:
                 nav_error = _short_error(str(e))
                 if log_callback:
@@ -160,6 +157,29 @@ def _do_login(page, login_url: str, login: str, password: str):
         page.wait_for_load_state("networkidle", timeout=5000)
     except Exception:
         pass
+
+
+def _wait_for_spa_render(page) -> None:
+    """
+    Wait for a SPA (React/Vue/Angular) page to finish rendering.
+    Strategy: wait for networkidle, then poll until interactive elements
+    appear or a maximum timeout is reached.
+    """
+    try:
+        page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception:
+        pass
+
+    # Poll until buttons/inputs/links appear — or give up after 8s
+    try:
+        page.wait_for_function(
+            "document.querySelectorAll('button, a, input, [role=\"button\"]').length > 0",
+            timeout=8000,
+            polling=300,
+        )
+    except Exception:
+        # Fallback: static wait if polling fails (e.g. CSP blocks eval)
+        page.wait_for_timeout(2000)
 
 
 def _short_error(msg: str) -> str:
@@ -259,18 +279,15 @@ def _extract(page, url_path: str) -> PageAnalysis:
     except Exception:
         pass
 
-    # Build a combined exclusion selector to skip ad/cookie containers
-    _exclude = ", ".join(_AD_CONTAINER_SELECTORS)
-
-    # Extract input fields (skip fields inside ad/cookie containers)
+    # Extract input fields
     try:
         inputs = page.locator(
-            f"input:not([type='hidden']):not({_exclude} input), "
-            f"textarea:not({_exclude} textarea), "
-            f"select:not({_exclude} select)"
+            "input:not([type='hidden']), textarea, select"
         ).all()
         for inp in inputs[:20]:
             try:
+                if _is_inside_ad_container(page, inp):
+                    continue
                 field = {
                     "type":        inp.get_attribute("type") or "text",
                     "name":        inp.get_attribute("name") or inp.get_attribute("id") or "",
@@ -285,15 +302,15 @@ def _extract(page, url_path: str) -> PageAnalysis:
     except Exception:
         pass
 
-    # Extract buttons (skip buttons inside ad/cookie containers)
+    # Extract buttons
     try:
         btn_els = page.locator(
-            f"button:not({_exclude} button), "
-            f"input[type='submit']:not({_exclude} input), "
-            f"a[role='button']:not({_exclude} a)"
+            "button, input[type='submit'], a[role='button']"
         ).all()
         for btn in btn_els[:15]:
             try:
+                if _is_inside_ad_container(page, btn):
+                    continue
                 text = (btn.inner_text() or btn.get_attribute("value") or "").strip()
                 if text:
                     buttons.append(text[:60])
