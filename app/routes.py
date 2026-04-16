@@ -1613,6 +1613,7 @@ def _heal_test_file(
 
     # Save original content so we can restore it if all fix attempts fail
     original_content = None
+    original_failures = list(failures)  # keep initial failures for skip-marking after restore
     if os.path.isfile(test_file_path):
         try:
             original_content = open(test_file_path, encoding="utf-8").read()
@@ -1671,8 +1672,10 @@ def _heal_test_file(
             _log(job_id, "  ↩ Test file restored to original state")
         except Exception:
             pass
-    # Auto-skip unfixable tests so they don't pollute the Stage 4 full run
-    _skip_failing_tests(test_file_path, failures)
+    # Auto-skip unfixable tests so they don't pollute the Stage 4 full run.
+    # Use original_failures — the file was just restored to its original state,
+    # so we must skip the tests that failed there, not tests from Claude's modified version.
+    _skip_failing_tests(test_file_path, original_failures)
     return "needs_review"
 
 
@@ -1699,6 +1702,9 @@ def _skip_failing_tests(test_file_path: str, failures: list) -> None:
             flags=_re.MULTILINE,
         )
         if patched != content:
+            # Ensure 'import pytest' is present (needed for @pytest.mark.skip)
+            if 'import pytest' not in patched:
+                patched = 'import pytest\n' + patched
             open(test_file_path, "w", encoding="utf-8").write(patched)
     except Exception:
         pass
