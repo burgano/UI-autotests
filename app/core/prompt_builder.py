@@ -76,13 +76,61 @@ def build_generate_tests(
 
     route_summary = json.dumps(route_info, indent=2, ensure_ascii=False)
 
+    # Build interactive map section from click-and-observe results
+    imap = route_info.get("interactive_map", [])
+    interactive_section = ""
+    if imap:
+        lines = ["## Interactive element map (click-and-observe results)",
+                 "The following was recorded by clicking each button and observing what appeared in the DOM.",
+                 "Use these EXACT selectors when asserting dropdowns/popups — do NOT guess ARIA roles.",
+                 ""]
+        for entry in imap:
+            lines.append(f"### Clicking: {entry['trigger_text']!r}  (trigger: `{entry['trigger_selector']}`)")
+            for el in entry.get("opened_elements", []):
+                lines.append(
+                    f"  → selector `{el['selector']}` appears ({el['count']} element(s))"
+                    + (f" — sample text: {el['sample_text']!r}" if el.get("sample_text") else "")
+                )
+            lines.append("")
+        interactive_section = "\n" + "\n".join(lines)
+
+    # Build contextual warnings based on page analysis results
+    spa_warnings = []
+    if route_info.get("is_spa"):
+        spa_warnings.append(
+            "⚠ SPA DETECTED: Always use `page.wait_for_load_state('networkidle', timeout=15000)` "
+            "after every `page.goto()`. Page content is loaded asynchronously."
+        )
+    if route_info.get("dynamic_title"):
+        spa_warnings.append(
+            "⚠ DYNAMIC TITLE: The page title is set by JavaScript. "
+            "Use `expect(page).to_have_title(re.compile(r'keyword', re.IGNORECASE))` — never assert an exact title string."
+        )
+    hidden = route_info.get("hidden_inputs", [])
+    if hidden:
+        hidden_desc = ", ".join(
+            f"<{h['tag']} placeholder='{h['placeholder']}' name='{h['name']}'>"
+            for h in hidden[:5]
+        )
+        spa_warnings.append(
+            f"⚠ HIDDEN INPUTS DETECTED: The following form fields are in the DOM but NOT visible: {hidden_desc}. "
+            "These fields are hidden until a trigger interaction (click on a container, toggle button, etc). "
+            "NEVER call .fill() on them directly. Find and use the corresponding VISIBLE sibling input instead, "
+            "or click the activation trigger first. Check both `input` and `textarea` variants — "
+            "typically there is a visible `<input>` and a hidden `<textarea>` for the same field."
+        )
+
+    spa_context = "\n".join(spa_warnings)
+    if spa_context:
+        spa_context = "\n## Page analysis warnings (MUST READ before writing tests)\n" + spa_context + "\n"
+
     return f"""{_load("system_prompt.txt")}
 
 ## Task: Generate Playwright Python tests
 
 Target URL: {base_url.rstrip("/")}{url}
 Endpoint path: {url}
-Autotest project directory: {autotest_path}
+Autotest project directory: {autotest_path}{spa_context}{interactive_section}
 
 ## Route analysis (extracted from frontend source)
 {route_summary}
@@ -150,6 +198,23 @@ Example: test_Login_Submit_ValidCredentials, test_Login_Submit_EmptyPassword
 - Each test must be fully independent — no shared state between tests
 - Never rely on execution order; each test starts fresh from `page.goto(BASE_URL)`
 - Use `fake` fixture (Faker) for dynamic test data instead of hardcoded strings that may conflict
+
+### SPA (React/Vue/Angular) rules — CRITICAL
+- Always use `page.wait_for_load_state("networkidle", timeout=15000)` after `page.goto()` — SPAs update the DOM asynchronously
+- Page titles in SPAs are set by JavaScript AFTER the initial HTML load. NEVER assert an exact title immediately — use `re.compile(r"partial_title", re.IGNORECASE)` with `expect(page).to_have_title(re.compile(...))`
+- URL may include auto-appended query params (e.g. `?q=today&mode=only-true`). NEVER assert `to_have_url("exact_url")` — use `expect(page).to_have_url(re.compile(r"base_path.*"))` to match prefix only
+- Import `re` at the top of the file when using regex patterns
+
+### Hidden / collapsed elements — CRITICAL
+- Modern SPAs often render input fields that are HIDDEN until the user clicks an activation trigger. NEVER call `.fill()` or `.press()` on a hidden element — it will timeout.
+- Before interacting with any input/textarea: always call `expect(locator).to_be_visible()` first. If it fails, look for a visible sibling or parent to click that reveals/expands the input.
+- A page may render BOTH a visible `<input>` and a hidden `<textarea>` for the same search field (one for single-line display, one for multi-line editing). Always use the VISIBLE one.
+- To find the correct visible search input: use `page.locator("input[placeholder='...']")` rather than `page.locator("textarea[placeholder='...']")` when the placeholder matches both — the `input` is usually the visible one.
+- For dropdowns/filter menus that open on button click: after clicking the button, wait with `page.wait_for_timeout(500)` then assert that the dropdown container is visible, NOT the individual items. If no ARIA role is present, try asserting `locator.count() > 0` instead of `.to_be_visible()`.
+
+### URL and navigation patterns in SPAs
+- If a page redirects to a URL with query params after load (e.g. `/attacks` → `/attacks?q=today`), tests that assert the exact URL will always fail. Use `re.compile(r"/attacks.*")` pattern.
+- After form submission or search, the page may stay on the same URL path. Assert the heading/content is still visible rather than asserting URL exactly.
 """
 
 
@@ -163,9 +228,65 @@ def build_diagnose_failure(
     flaky = any(rerun_results) and not all(rerun_results)
     classification = "FLAKY" if flaky else "CONSISTENT_FAILURE"
 
+    # Detect issue type from error output to give targeted instructions
+    import re as _re
+    hidden_el = bool(_re.search(
+        r"element is not visible|element is not editable|not visible.*not editable|waiting for.*to be visible.*editable",
+        error_output, _re.IGNORECASE
+    ))
+    url_mismatch = bool(_re.search(
+        r"Page URL expected to be|unexpected value.*https?://", error_output, _re.IGNORECASE
+    ))
+    title_mismatch = bool(_re.search(
+        r"Page title expected to be|unexpected value.*title", error_output, _re.IGNORECASE
+    ))
+
+    targeted_hint = ""
+    if hidden_el:
+        targeted_hint = """
+## HIDDEN ELEMENT DETECTED
+The error says the element exists but is not visible/editable. This is a SPA hidden-field pattern.
+
+Fix steps (try in order):
+1. Check if there are both `<input>` AND `<textarea>` with the same placeholder. Use the VISIBLE one — typically `input[placeholder='...']` is visible while `textarea[placeholder='...']` is hidden.
+2. Add `page.wait_for_load_state("networkidle", timeout=15000)` right after `page.goto()`.
+3. If the field is inside a collapsed panel: find the visible trigger button/container and `.click()` it first, then interact with the field.
+4. NEVER use `.scroll_into_view_if_needed()` or `.fill()` on a hidden element — it will always timeout.
+"""
+    elif url_mismatch:
+        targeted_hint = """
+## SPA URL MISMATCH DETECTED
+The page URL has query parameters appended automatically by the SPA (e.g. ?q=today&mode=only-true).
+
+Fix: replace exact URL assertion with a regex pattern:
+```python
+import re
+# Before:
+expect(page).to_have_url("https://example.com/path")
+# After:
+expect(page).to_have_url(re.compile(r"https://example\\.com/path.*"))
+```
+Make sure `import re` is at the top of the test file.
+"""
+    elif title_mismatch:
+        targeted_hint = """
+## SPA TITLE MISMATCH DETECTED
+The page title is set by JavaScript after the initial HTML load. The assertion ran too early.
+
+Fix: replace exact title with a partial regex match:
+```python
+import re
+# Before:
+expect(page).to_have_title("Exact Page Title – Site")
+# After:
+expect(page).to_have_title(re.compile(r"keyword", re.IGNORECASE))
+```
+Also add `page.wait_for_load_state("networkidle", timeout=15000)` after `page.goto()`.
+"""
+
     return f"""{_load("system_prompt.txt")}
 
-## Task: Diagnose test failure
+## Task: Diagnose and fix test failure
 
 Test: {test_name}
 File: {test_file}
@@ -175,13 +296,13 @@ Rerun results (True=pass): {rerun_results}
 
 ## Error output
 {error_output[:3000]}
-
+{targeted_hint}
 ## Instructions
 1. Read the test file at: {test_file}
 2. Determine root cause: test bug (bad selector, wrong assertion) OR app bug (unstable behavior)
-3. If test bug: fix the test in place
+3. If test bug: fix the test in place using the targeted hint above if provided
 4. If app bug: add a comment in the test: # KNOWN_ISSUE: <description>
-5. Output a one-line diagnosis: FIXED_TEST | APP_BUG | FLAKY_TIMING | SELECTOR_ISSUE
+5. Output a one-line diagnosis: FIXED_TEST | APP_BUG | FLAKY_TIMING | SELECTOR_ISSUE | HIDDEN_ELEMENT | ASSERTION_MISMATCH
 """
 
 
@@ -206,20 +327,59 @@ URL under test: {url}
 1. Read the test file at: {test_file}
 2. Read conftest.py in the project root to understand fixtures (read only, do not modify it)
 3. For each failing test above identify the root cause from the error message:
-   - Wrong selector (element not found, wrong locator) - fix the selector
-   - Wrong assertion (expected value doesn't match actual) - fix the assertion
-   - Missing wait or timing issue - add expect().to_be_visible() or wait_for_selector
-   - Wrong navigation flow (wrong URL, missing step) - fix the navigation
+   - Wrong selector (element not found, wrong locator) → fix the selector
+   - Wrong assertion (expected value doesn't match actual) → fix the assertion
+   - Missing wait or timing issue → add page.wait_for_load_state("networkidle") or expect().to_be_visible()
+   - Wrong navigation flow (wrong URL, missing step) → fix the navigation
+   - **HIDDEN ELEMENT** (element found but not visible / not editable) → see rules below
+   - **EXACT URL MISMATCH** (URL has unexpected query params) → use re.compile() pattern
+   - **EXACT TITLE MISMATCH** (SPA title not yet updated) → use re.compile() with partial match
 4. Fix only the failing tests in-place. Do NOT touch passing tests. Do NOT add new tests.
 5. If a test is catching a real app bug (not a test mistake), add # KNOWN_ISSUE: <description> and adjust the assertion to match actual behavior so the test passes.
 
-## Playwright rules to apply when fixing
+## Critical fix patterns
+
+### Hidden element fix ("element is not visible" / "element is not editable")
+When error says "element is not visible" or "waiting for element to be editable":
+- The element exists in DOM but is HIDDEN (display:none or visibility:hidden)
+- SPAs often render BOTH a visible `<input>` and a hidden `<textarea>` for the same field
+- Fix: switch from `page.locator("textarea[placeholder='...']")` to `page.locator("input[placeholder='...']")`
+- If that doesn't work: add `page.wait_for_load_state("networkidle", timeout=15000)` right after `page.goto()`
+- As last resort: use `locator.click(force=True)` only if you are certain the element is in the viewport
+
+### URL mismatch fix ("Page URL expected to be X, actual value contains query params")
+When error shows URL has extra query params (e.g. `?q=today&mode=only-true`):
+```python
+import re
+# Replace:
+expect(page).to_have_url("https://example.com/path")
+# With:
+expect(page).to_have_url(re.compile(r"https://example\\.com/path.*"))
+```
+
+### Title mismatch fix ("Page title expected to be X, actual value is Y")
+When SPA hasn't updated the title yet:
+```python
+import re
+# Replace:
+expect(page).to_have_title("Exact Title – Site")
+# With:
+expect(page).to_have_title(re.compile(r"partial_keyword", re.IGNORECASE))
+```
+
+### Dropdown visibility fix ("element(s) not found" after button click)
+When a filter/dropdown button was clicked but the popup isn't found:
+- Add `page.wait_for_timeout(500)` after the click to let the animation finish
+- Try a broader selector: look for ANY newly visible container, not specific ARIA roles
+- Use `expect(page.locator(".some-class").first).to_be_visible()` if the dropdown has a known class
+
+## Playwright assertion rules
 - Replace `assert locator.count() == 0` → `expect(locator).to_have_count(0)`
 - Replace `assert locator.is_visible()` → `expect(locator).to_be_visible()`
 - Replace `assert locator.inner_text() == "..."` → `expect(locator).to_have_text("...")`
 - Replace `assert locator.input_value() == "..."` → `expect(locator).to_have_value("...")`
-- Replace `assert page.url == "..."` → `expect(page).to_have_url("...")`
-- Remove any `time.sleep()` or `page.wait_for_timeout()` — add `expect(locator).to_be_visible()` instead if needed
+- Replace `assert page.url == "..."` → `expect(page).to_have_url(re.compile(r"partial.*"))`
+- Remove any `time.sleep()` or `page.wait_for_timeout()` for readiness — add `expect(locator).to_be_visible()` instead
 - Replace CSS/XPath selectors with role/label/placeholder locators where possible
 """
 

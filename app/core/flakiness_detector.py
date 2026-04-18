@@ -78,10 +78,12 @@ def diagnose(
         short_name = test.name.split("::")[-1]
         if log_callback:
             icon = {
-                "FLAKY_TIMING":   "⚡",
-                "FLAKY_NETWORK":  "🌐",
-                "SELECTOR_ISSUE": "🔍",
-                "APP_BUG":        "🐛",
+                "FLAKY_TIMING":      "⚡",
+                "FLAKY_NETWORK":     "🌐",
+                "SELECTOR_ISSUE":    "🔍",
+                "HIDDEN_ELEMENT":    "👁",
+                "ASSERTION_MISMATCH":"🔀",
+                "APP_BUG":           "🐛",
             }.get(classification, "?")
             reruns_str = " ".join("✓" if r else "✗" for r in rerun_results)
             log_callback(f"  {icon} {short_name[:60]}  [{reruns_str}] -> {classification}")
@@ -101,8 +103,14 @@ def _classify(rerun_results: list[bool], error_msg: str) -> str:
 
     # No rerun data - process was killed or report missing; classify by original error
     if total == 0:
+        # Hidden element: locator resolves but element is not visible/editable
+        if re.search(r"element is not visible|element is not editable|not visible.*not editable|waiting for.*to be visible.*editable", error_msg, re.IGNORECASE):
+            return "HIDDEN_ELEMENT"
         if re.search(r"strict mode violation|locator\.(?:click|fill|check)|TimeoutError.*waiting for", error_msg, re.IGNORECASE):
             return "SELECTOR_ISSUE"
+        # URL/title mismatch: exact value assertion failed on dynamic content
+        if re.search(r"Page URL expected to be|Page title expected to be|unexpected value.*https?://", error_msg, re.IGNORECASE):
+            return "ASSERTION_MISMATCH"
         if re.search(r"AssertionError|assert\s", error_msg, re.IGNORECASE):
             return "APP_BUG"
         if re.search(r"TimeoutError|net::ERR", error_msg, re.IGNORECASE):
@@ -119,7 +127,11 @@ def _classify(rerun_results: list[bool], error_msg: str) -> str:
     if passed_count == total:
         return "FLAKY_TIMING"
 
-    # All reruns failed
+    # All reruns failed — classify consistently failing tests
+    if re.search(r"element is not visible|element is not editable|not visible.*not editable|waiting for.*to be visible.*editable", error_msg, re.IGNORECASE):
+        return "HIDDEN_ELEMENT"
+    if re.search(r"Page URL expected to be|Page title expected to be|unexpected value.*https?://", error_msg, re.IGNORECASE):
+        return "ASSERTION_MISMATCH"
     if re.search(r"strict mode violation|locator\.(?:click|fill|check)|TimeoutError.*waiting for", error_msg, re.IGNORECASE):
         return "SELECTOR_ISSUE"
     if re.search(r"AssertionError|assert\s", error_msg, re.IGNORECASE):
@@ -131,9 +143,11 @@ def _classify(rerun_results: list[bool], error_msg: str) -> str:
 
 def _recommend(classification: str) -> str:
     return {
-        "FLAKY_TIMING":   "Add page.wait_for_load_state('networkidle') or increase timeout",
-        "FLAKY_NETWORK":  "Check app stability - network timeouts detected during test runs",
-        "SELECTOR_ISSUE": "Fix selector - element not found. Claude will auto-fix this test",
-        "APP_BUG":        "Possible bug in the app - assertion failed consistently. Manual review recommended",
-        "UNKNOWN":        "Inspect error manually",
+        "FLAKY_TIMING":      "Add page.wait_for_load_state('networkidle') or increase timeout",
+        "FLAKY_NETWORK":     "Check app stability - network timeouts detected during test runs",
+        "SELECTOR_ISSUE":    "Fix selector - element not found. Claude will auto-fix this test",
+        "HIDDEN_ELEMENT":    "Element exists but is hidden. Switch to the visible sibling (input vs textarea), or click the activation trigger first. Claude will auto-fix this test",
+        "ASSERTION_MISMATCH":"Exact URL/title assertion fails on SPA dynamic content. Use re.compile() partial match. Claude will auto-fix this test",
+        "APP_BUG":           "Possible bug in the app - assertion failed consistently. Manual review recommended",
+        "UNKNOWN":           "Inspect error manually",
     }.get(classification, "Inspect error manually")

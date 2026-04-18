@@ -397,7 +397,7 @@ def claude_code_status():
 def claude_probe():
     """Send a minimal message to Claude to check if rate limit is active."""
     import datetime as _dt
-    result = claude_client.probe(model="claude-haiku-4-5-20251001")
+    result = claude_client.probe(model=MODELS["haiku"]["id"])
     if result[0]:
         return jsonify(ok=True, reachable=True)
 
@@ -1228,8 +1228,9 @@ def _run_pipeline(
             )
 
             for d in raw_diagnoses:
-                if d.classification == "SELECTOR_ISSUE":
-                    _log(job_id, f"  Auto-fixing: {d.test_name}")
+                # Auto-fix selector issues, hidden element problems, and SPA assertion mismatches
+                if d.classification in ("SELECTOR_ISSUE", "HIDDEN_ELEMENT", "ASSERTION_MISMATCH"):
+                    _log(job_id, f"  Auto-fixing [{d.classification}]: {d.test_name}")
                     failed_test = next((t for t in failed_tests if t.name == d.test_name), None)
                     if failed_test:
                         fix_prompt = prompt_builder.build_diagnose_failure(
@@ -1635,7 +1636,7 @@ def _heal_test_file(
         fix_result = claude_client.run(
             prompt=fix_prompt,
             working_dir=autotest_path,
-            model=FIX_MODEL_ID,
+            model=FIX_MODEL_ID(),
             budget_usd=FIX_BUDGET_USD,
             on_proc_start=lambda p: _claude_procs.update({job_id: p}),
         )
