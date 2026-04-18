@@ -98,8 +98,11 @@ def build_generate_tests(
     spa_warnings = []
     if route_info.get("is_spa"):
         spa_warnings.append(
-            "⚠ SPA DETECTED: Always use `page.wait_for_load_state('networkidle', timeout=15000)` "
-            "after every `page.goto()`. Page content is loaded asynchronously."
+            "⚠ SPA DETECTED: After every `page.goto()` use the two-step wait pattern:\n"
+            "  1. `page.wait_for_load_state('domcontentloaded')`\n"
+            "  2. `expect(page.get_by_role('heading').first).to_be_visible(timeout=10000)`\n"
+            "  Do NOT use `wait_for_load_state('networkidle')` — it requires 500ms of zero network "
+            "activity and fails under parallel test runs due to background API polling."
         )
     if route_info.get("dynamic_title"):
         spa_warnings.append(
@@ -190,7 +193,7 @@ Example: test_Login_Submit_ValidCredentials, test_Login_Submit_EmptyPassword
 ### Interactions — let Playwright auto-wait
 - NEVER add `time.sleep()` — Playwright waits for actionability automatically before every action
 - NEVER add `page.wait_for_timeout(ms)` for element readiness — use `expect(locator).to_be_visible()` before interacting if needed
-- Use `page.wait_for_load_state("domcontentloaded")` only right after `page.goto()` when the page is heavy
+- After `page.goto()` on a SPA: use `page.wait_for_load_state("domcontentloaded")` then wait for a specific visible element. NEVER use `networkidle` — it timeouts under parallel workers
 - Use `locator.fill("text")` for inputs — NOT `locator.click(); locator.type("text")`
 - Use `locator.select_option("value")` for `<select>` dropdowns — NOT clicking individual options
 
@@ -200,7 +203,13 @@ Example: test_Login_Submit_ValidCredentials, test_Login_Submit_EmptyPassword
 - Use `fake` fixture (Faker) for dynamic test data instead of hardcoded strings that may conflict
 
 ### SPA (React/Vue/Angular) rules — CRITICAL
-- Always use `page.wait_for_load_state("networkidle", timeout=15000)` after `page.goto()` — SPAs update the DOM asynchronously
+- After `page.goto()` use the two-step wait — NOT `networkidle`:
+  ```python
+  page.goto(url)
+  page.wait_for_load_state("domcontentloaded")
+  expect(page.get_by_role("heading").first).to_be_visible(timeout=10000)
+  ```
+  `networkidle` requires 500ms of zero network activity. SPAs have background polling/websockets, and parallel test runs keep the network permanently busy — `networkidle` will timeout. `domcontentloaded` + explicit element wait is reliable regardless of parallelism.
 - Page titles in SPAs are set by JavaScript AFTER the initial HTML load. NEVER assert an exact title immediately — use `re.compile(r"partial_title", re.IGNORECASE)` with `expect(page).to_have_title(re.compile(...))`
 - URL may include auto-appended query params (e.g. `?q=today&mode=only-true`). NEVER assert `to_have_url("exact_url")` — use `expect(page).to_have_url(re.compile(r"base_path.*"))` to match prefix only
 - Import `re` at the top of the file when using regex patterns
@@ -249,7 +258,11 @@ The error says the element exists but is not visible/editable. This is a SPA hid
 
 Fix steps (try in order):
 1. Check if there are both `<input>` AND `<textarea>` with the same placeholder. Use the VISIBLE one — typically `input[placeholder='...']` is visible while `textarea[placeholder='...']` is hidden.
-2. Add `page.wait_for_load_state("networkidle", timeout=15000)` right after `page.goto()`.
+2. Add the two-step SPA wait right after `page.goto()`:
+   ```python
+   page.wait_for_load_state("domcontentloaded")
+   expect(page.get_by_role("heading").first).to_be_visible(timeout=10000)
+   ```
 3. If the field is inside a collapsed panel: find the visible trigger button/container and `.click()` it first, then interact with the field.
 4. NEVER use `.scroll_into_view_if_needed()` or `.fill()` on a hidden element — it will always timeout.
 """
@@ -281,7 +294,11 @@ expect(page).to_have_title("Exact Page Title – Site")
 # After:
 expect(page).to_have_title(re.compile(r"keyword", re.IGNORECASE))
 ```
-Also add `page.wait_for_load_state("networkidle", timeout=15000)` after `page.goto()`.
+Also replace any `wait_for_load_state("networkidle")` with the two-step pattern:
+```python
+page.wait_for_load_state("domcontentloaded")
+expect(page.get_by_role("heading").first).to_be_visible(timeout=10000)
+```
 """
 
     return f"""{_load("system_prompt.txt")}
@@ -329,7 +346,7 @@ URL under test: {url}
 3. For each failing test above identify the root cause from the error message:
    - Wrong selector (element not found, wrong locator) → fix the selector
    - Wrong assertion (expected value doesn't match actual) → fix the assertion
-   - Missing wait or timing issue → add page.wait_for_load_state("networkidle") or expect().to_be_visible()
+   - Missing wait or timing issue → use two-step SPA wait: `page.wait_for_load_state("domcontentloaded")` then `expect(page.get_by_role("heading").first).to_be_visible(timeout=10000)`. Do NOT use networkidle — it timeouts under parallel workers.
    - Wrong navigation flow (wrong URL, missing step) → fix the navigation
    - **HIDDEN ELEMENT** (element found but not visible / not editable) → see rules below
    - **EXACT URL MISMATCH** (URL has unexpected query params) → use re.compile() pattern
@@ -344,7 +361,8 @@ When error says "element is not visible" or "waiting for element to be editable"
 - The element exists in DOM but is HIDDEN (display:none or visibility:hidden)
 - SPAs often render BOTH a visible `<input>` and a hidden `<textarea>` for the same field
 - Fix: switch from `page.locator("textarea[placeholder='...']")` to `page.locator("input[placeholder='...']")`
-- If that doesn't work: add `page.wait_for_load_state("networkidle", timeout=15000)` right after `page.goto()`
+- If that doesn't work: add the two-step SPA wait right after `page.goto()`:
+  `page.wait_for_load_state("domcontentloaded")` then `expect(page.get_by_role("heading").first).to_be_visible(timeout=10000)`
 - As last resort: use `locator.click(force=True)` only if you are certain the element is in the viewport
 
 ### URL mismatch fix ("Page URL expected to be X, actual value contains query params")
