@@ -57,6 +57,29 @@ else
     echo "Claude Code CLI found: $(which claude 2>/dev/null || echo "$HOME/.local/bin/claude")"
 fi
 
+# ── Java (required by Allure) ─────────────────────────────────────────────────
+if ! which java &>/dev/null; then
+    echo "Java not found. Installing OpenJDK 21..."
+    OS="$(uname -s)"
+    if [ "$OS" = "Linux" ]; then
+        sudo apt-get update -q 2>/dev/null || true
+        if sudo apt-get install -y openjdk-21-jre-headless 2>/dev/null; then
+            echo "Java installed: $(java -version 2>&1 | head -1)"
+        else
+            echo "WARNING: Could not install Java automatically. Install manually: sudo apt install openjdk-21-jre-headless"
+        fi
+    elif [ "$OS" = "Darwin" ]; then
+        if which brew &>/dev/null; then
+            brew install --cask temurin 2>/dev/null || brew install openjdk 2>/dev/null || true
+            export PATH="$(brew --prefix openjdk)/bin:$PATH" 2>/dev/null || true
+            which java &>/dev/null && echo "Java installed: $(java -version 2>&1 | head -1)" \
+                || echo "WARNING: Could not install Java automatically. Install manually: brew install --cask temurin"
+        else
+            echo "WARNING: Java not found and Homebrew is not installed. Install Java manually from https://adoptium.net"
+        fi
+    fi
+fi
+
 # ── Allure CLI ────────────────────────────────────────────────────────────────
 if ! which allure &>/dev/null; then
     OS="$(uname -s)"
