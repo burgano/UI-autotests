@@ -41,7 +41,7 @@ def analyze_page(
         return PageAnalysis(url=url, title="", error="Playwright not installed")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=True, channel="chrome")
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
         page.set_default_timeout(15000)
@@ -86,7 +86,7 @@ def analyze_pages(
     results = {}
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=True, channel="chrome")
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
         page.set_default_timeout(15000)

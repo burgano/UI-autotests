@@ -37,7 +37,25 @@ echo "Installing dependencies..."
 pip install -r requirements.txt -q
 
 echo "Installing Playwright browsers..."
-playwright install chromium
+SYSTEM_CHROME=$(which google-chrome 2>/dev/null || which chromium-browser 2>/dev/null || which chromium 2>/dev/null || true)
+if [ -n "$SYSTEM_CHROME" ]; then
+    echo "System Chrome found at $SYSTEM_CHROME — skipping Playwright browser download."
+else
+    playwright install chromium
+fi
+
+# ── Claude Code CLI ───────────────────────────────────────────────────────────
+if ! which claude &>/dev/null && [ ! -f "$HOME/.local/bin/claude" ]; then
+    echo "Claude Code CLI not found. Installing..."
+    if curl -fsSL https://claude.ai/install.sh | bash; then
+        export PATH="$HOME/.local/bin:$PATH"
+        echo "Claude Code CLI installed."
+    else
+        echo "WARNING: Could not install Claude Code CLI. Install manually: curl -fsSL https://claude.ai/install.sh | bash"
+    fi
+else
+    echo "Claude Code CLI found: $(which claude 2>/dev/null || echo "$HOME/.local/bin/claude")"
+fi
 
 # ── Allure CLI ────────────────────────────────────────────────────────────────
 if ! which allure &>/dev/null; then
