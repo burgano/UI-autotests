@@ -92,6 +92,7 @@ def run_tests(
         "--tb=short",
         "--override-ini=addopts=",         # ignore pytest.ini addopts to avoid duplicate flags
         "--browser", "chromium",           # explicit browser to prevent duplicate parametrization
+        "--browser-channel", "chrome",     # use system Chrome (avoids downloading Playwright Chromium)
     ]
     if use_allure and _allure_pytest_installed():
         cmd += [f"--alluredir={allure_dir}", "--clean-alluredir"]
