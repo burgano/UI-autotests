@@ -454,6 +454,7 @@ function runTestsPage() {
         const data = await res.json()
         if (data.ok) {
           this.allureStatus = ''
+          if (data.url) window.open(data.url, '_blank')
         } else {
           this.allureStatus = 'error'
           this.allureError  = data.error || 'Unknown error'

@@ -5,8 +5,22 @@ Navigates to each URL, extracts DOM structure: inputs, buttons,
 links, forms, headings - and returns a compact summary for prompts.
 """
 
+import shutil
 from dataclasses import dataclass, field
 from typing import Optional
+
+_SYSTEM_CHROME_NAMES = ("google-chrome", "google-chrome-stable", "chromium-browser", "chromium")
+_SYSTEM_CHROME_ARGS  = [
+    "--no-sandbox", "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote",
+]
+
+
+def _chrome_launch_kwargs() -> dict:
+    """Return channel+args when system Chrome is available, otherwise plain Playwright Chromium."""
+    if any(shutil.which(n) for n in _SYSTEM_CHROME_NAMES):
+        return {"channel": "chrome", "args": _SYSTEM_CHROME_ARGS}
+    return {}
 
 
 @dataclass
@@ -41,7 +55,7 @@ def analyze_page(
         return PageAnalysis(url=url, title="", error="Playwright not installed")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, channel="chrome")
+        browser = p.chromium.launch(headless=True, **_chrome_launch_kwargs())
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
         page.set_default_timeout(15000)
@@ -86,7 +100,7 @@ def analyze_pages(
     results = {}
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, channel="chrome")
+        browser = p.chromium.launch(headless=True, **_chrome_launch_kwargs())
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
         page.set_default_timeout(15000)

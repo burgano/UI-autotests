@@ -287,7 +287,11 @@ function resultsPage() {
           body: JSON.stringify({ project_path: this.autotestPath }),
         })
         const data = await res.json()
-        if (!data.ok) this.actionStatus = '✗ Allure: ' + (data.error || 'unknown error')
+        if (data.ok) {
+          if (data.url) window.open(data.url, '_blank')
+        } else {
+          this.actionStatus = '✗ Allure: ' + (data.error || 'unknown error')
+        }
       } catch(e) {
         this.actionStatus = '✗ Allure: ' + e.message
       } finally {

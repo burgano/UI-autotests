@@ -5,11 +5,21 @@ Runs pytest in the autotest project and parses JSON report results.
 import atexit
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
 from dataclasses import dataclass, field
 from typing import Optional
+
+_SYSTEM_CHROME_NAMES = ("google-chrome", "google-chrome-stable", "chromium-browser", "chromium")
+
+
+def _system_chrome_pytest_args() -> list[str]:
+    """Return --browser-channel chrome args when system Chrome is available."""
+    if any(shutil.which(n) for n in _SYSTEM_CHROME_NAMES):
+        return ["--browser-channel", "chrome"]
+    return []
 
 # Global registry of all active pytest subprocesses - killed on app exit
 _active_procs: list[subprocess.Popen] = []
@@ -92,7 +102,7 @@ def run_tests(
         "--tb=short",
         "--override-ini=addopts=",         # ignore pytest.ini addopts to avoid duplicate flags
         "--browser", "chromium",           # explicit browser to prevent duplicate parametrization
-        "--browser-channel", "chrome",     # use system Chrome (avoids downloading Playwright Chromium)
+        *(_system_chrome_pytest_args()),   # use system Chrome if available
     ]
     if use_allure and _allure_pytest_installed():
         cmd += [f"--alluredir={allure_dir}", "--clean-alluredir"]

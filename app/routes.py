@@ -115,7 +115,17 @@ _allure_proc = None   # currently running `allure open` process
 
 def _allure_cli_path() -> str | None:
     import shutil
-    return shutil.which("allure") or (_ALLURE_CLI if os.path.isfile(_ALLURE_CLI) else None)
+    found = shutil.which("allure")
+    if found:
+        return found
+    # Common install locations when ~/.local/bin is not in PATH
+    candidates = [
+        _ALLURE_CLI,
+        os.path.expanduser("~/.local/bin/allure"),
+        "/usr/local/bin/allure",
+        "/usr/bin/allure",
+    ]
+    return next((p for p in candidates if os.path.isfile(p)), None)
 
 
 def _allure_pytest_installed() -> bool:
@@ -264,6 +274,16 @@ def allure_install_plugin():
         return jsonify(ok=False, error=str(e))
 
 
+def _find_free_port(start: int = 5100) -> int:
+    import socket
+    port = start
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+        port += 1
+
+
 @bp.post("/allure/open")
 def allure_open():
     global _allure_proc
@@ -274,33 +294,26 @@ def allure_open():
     if not project_path or not os.path.isdir(project_path):
         return jsonify(ok=False, error="Invalid project path")
     if not allure_cli:
-        return jsonify(ok=False, error="Allure CLI not found. Install with: brew install allure")
+        return jsonify(ok=False, error="Allure CLI not found. Install manually: curl -fsSL https://github.com/allure-framework/allure2/releases/download/2.27.0/allure-2.27.0.tgz | tar -xz")
 
-    allure_dir    = os.path.join(project_path, ".allure-results")
-    allure_report = os.path.join(project_path, ".allure-report")
-
+    allure_dir = os.path.join(project_path, ".allure-results")
     if not os.path.isdir(allure_dir):
         return jsonify(ok=False, error=".allure-results not found - run tests first")
 
     # Kill previous allure server if running
     if _allure_proc and _allure_proc.poll() is None:
         _allure_proc.terminate()
+        _allure_proc = None
 
+    port = _find_free_port(5100)
     try:
-        # Generate report
-        subprocess.run(
-            [allure_cli, "generate", allure_dir, "-o", allure_report, "--clean"],
-            capture_output=True, text=True, timeout=60, check=True,
-        )
-        # Open report in browser (allure serve opens its own server)
+        # allure serve generates + serves in one step; --port fixes the URL we return
         _allure_proc = subprocess.Popen(
-            [allure_cli, "open", allure_report],
+            [allure_cli, "serve", allure_dir, "--port", str(port), "--host", "127.0.0.1"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        return jsonify(ok=True)
-    except subprocess.CalledProcessError as e:
-        return jsonify(ok=False, error=(e.stderr or str(e))[:300])
+        return jsonify(ok=True, url=f"http://127.0.0.1:{port}")
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 

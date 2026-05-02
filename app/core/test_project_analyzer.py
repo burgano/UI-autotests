@@ -8,8 +8,16 @@ Analyzes the autotest project directory.
 
 import ast
 import os
+import shutil
 from dataclasses import dataclass, field
 from typing import Optional
+
+_SYSTEM_CHROME_NAMES = ("google-chrome", "google-chrome-stable", "chromium-browser", "chromium")
+_CHROME_LAUNCH_ARGS  = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote"]
+
+
+def _has_system_chrome() -> bool:
+    return any(shutil.which(n) for n in _SYSTEM_CHROME_NAMES)
 
 
 @dataclass
@@ -123,6 +131,17 @@ def _has_conftest(root: str) -> bool:
 
 def build_conftest(autotest_path: str, base_url: str, login: str = "", password: str = "", login_url: str = "/login", bypass_header: dict | None = None, sleep_ms: int = 0) -> str:
     """Generate conftest.py content for the autotest project."""
+    launch_args_fixture = ""
+    if _has_system_chrome():
+        launch_args_fixture = f'''
+@pytest.fixture(scope="session")
+def browser_type_launch_args(browser_type_launch_args):
+    return {{
+        **browser_type_launch_args,
+        "args": {_CHROME_LAUNCH_ARGS!r},
+    }}
+'''
+
     auth_fixture = ""
     if login:
         _login_path = "/" + login_url.strip("/")
@@ -201,6 +220,7 @@ def _get_env_bypass_header() -> dict:
     return {{}}
 
 
+{launch_args_fixture}
 @pytest.fixture(scope="session")
 def browser_context_args(browser_context_args):
     ctx = {{
