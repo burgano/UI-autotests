@@ -9,8 +9,8 @@ CLAUDE_CLI_PATH = shutil.which("claude") or os.path.expanduser("~/.local/bin/cla
 # Fallback model list — used immediately on startup and replaced in background
 MODELS = {
     "haiku":  {"id": "claude-haiku-4-5-20251001",  "label": "Haiku 4.5  - fast, simple pages",      "min_complexity": 0},
-    "sonnet": {"id": "claude-sonnet-4-6",           "label": "Sonnet 4.6 - recommended, most pages", "min_complexity": 10},
-    "opus":   {"id": "claude-opus-4-6",             "label": "Opus 4.6   - complex, deep flows",     "min_complexity": 40},
+    "sonnet": {"id": "claude-sonnet-5",             "label": "Sonnet 5   - recommended, most pages", "min_complexity": 10},
+    "opus":   {"id": "claude-opus-4-8",             "label": "Opus 4.8   - complex, deep flows",     "min_complexity": 40},
 }
 
 MODEL_DEFAULT = "sonnet"

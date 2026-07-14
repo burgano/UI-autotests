@@ -48,7 +48,7 @@ def run(
     prompt: str,
     working_dir: str,
     extra_dirs: Optional[list] = None,
-    model: str = "claude-sonnet-4-6",
+    model: str = "claude-sonnet-5",
     budget_usd: float = DEFAULT_BUDGET_USD,
     timeout: int = 300,
     on_proc_start=None,   # callback(proc) called right after Popen, for cancellation support
